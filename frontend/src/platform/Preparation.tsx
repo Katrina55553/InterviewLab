@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, errorMessage } from './api';
 import { useResource } from './hooks';
 import type { Resume } from './types';
@@ -17,6 +17,7 @@ function ParsedValue({ value }: { value: unknown }): ReactNode {
 export function PreparationPage() {
   const { id = '' } = useParams();
   const { data, error, refresh, setData } = useResource<Resume>(`/resumes/${id}`, 2500);
+  const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
   const retry = async () => {
@@ -25,7 +26,15 @@ export function PreparationPage() {
     catch (err) { setActionError(errorMessage(err)) }
     finally { setBusy(false) }
   };
+  const discuss = async () => {
+    setBusy(true); setActionError('');
+    try {
+      const chat = await api<{ id: string }>('/chats', { method: 'POST', body: { resume_id: id } });
+      navigate(`/chat/${chat.id}`);
+    } catch (err) { setActionError(errorMessage(err)) }
+    finally { setBusy(false) }
+  };
   if (!data) return error ? <Notice>{error}<button className="text-button" onClick={() => void refresh()}>重新加载</button></Notice> : <Loading text="正在打开简历…" />;
   const preparation = data.preparation;
-  return <><Link className="back-link" to="/resumes">← 返回简历诊断</Link><div className="page-heading compact"><span className="eyebrow">GET TO KNOW YOUR STORY</span><h1>简历诊断</h1><p className="muted">{data.filename} <Status value={data.status} /></p></div>{error && <Notice>{error}</Notice>}{actionError && <Notice>{actionError}</Notice>}{data.status === 'failed' ? <section className="card"><Notice>{data.error ?? '简历准备失败，请重试。'}</Notice><button className="btn primary" disabled={busy} onClick={() => void retry()}>重新准备</button></section> : data.status !== 'ready' ? <section className="card preparing"><Loading text={data.status === 'queued' ? '简历已加入准备队列…' : '正在解析简历并生成诊断结果…'} /><p className="muted">这可能需要一点时间。你可以离开页面，稍后在简历诊断中继续。</p><div className="preparing-steps"><span>解析经历</span><i /><span>评估简历</span><i /><span>整理改进建议</span></div></section> : <><div className="prep-grid"><section className="card score-card"><span className="eyebrow">RESUME REVIEW</span><div className="score-display">{preparation?.resume_score ?? '—'}<span>/ 100</span></div><h2>简历评分</h2><DemoBadge demo={preparation?.demo} /><p className="muted">围绕内容完整性、经历表达与岗位相关性，为你的准备提供参考。</p><ul className="suggestions">{preparation?.suggestions?.map((suggestion, index) => <li key={index}><Icon name="spark" size={16} /><span>{suggestion}</span></li>)}</ul></section><section className="card"><span className="eyebrow">YOUR NEXT STEP</span><h2>按建议完善你的简历</h2><p className="muted">结合评分与解析内容，检查经历表达，补充具体行动和量化成果。</p><p className="muted">想练习如何讲清这些经历？可以带着这份简历进入面试室。</p><Link className="btn" to={`/interviews/new?resume=${encodeURIComponent(id)}`}>用这份简历练习<Icon name="arrow" size={17} /></Link></section></div><section className="card parsed-resume"><div className="section-heading"><div><span className="eyebrow">YOUR RESUME, ORGANIZED</span><h2>解析后的经历</h2></div></div>{data.parsed ? <ParsedValue value={data.parsed} /> : <p className="muted">暂无结构化解析内容。</p>}</section></>}</>;
+  return <><Link className="back-link" to="/resumes">← 返回简历诊断</Link><div className="page-heading compact"><span className="eyebrow">GET TO KNOW YOUR STORY</span><h1>简历诊断</h1><p className="muted">{data.filename} <Status value={data.status} /></p></div>{error && <Notice>{error}</Notice>}{actionError && <Notice>{actionError}</Notice>}{data.status === 'failed' ? <section className="card"><Notice>{data.error ?? '简历准备失败，请重试。'}</Notice><button className="btn primary" disabled={busy} onClick={() => void retry()}>重新准备</button></section> : data.status !== 'ready' ? <section className="card preparing"><Loading text={data.status === 'queued' ? '简历已加入准备队列…' : '正在解析简历并生成诊断结果…'} /><p className="muted">这可能需要一点时间。你可以离开页面，稍后在简历诊断中继续。</p><div className="preparing-steps"><span>解析经历</span><i /><span>评估简历</span><i /><span>整理改进建议</span></div></section> : <><div className="prep-grid"><section className="card score-card"><span className="eyebrow">RESUME REVIEW</span><div className="score-display">{preparation?.resume_score ?? '—'}<span>/ 100</span></div><h2>简历评分</h2><DemoBadge demo={preparation?.demo} /><p className="muted">围绕内容完整性、经历表达与岗位相关性，为你的准备提供参考。</p><ul className="suggestions">{preparation?.suggestions?.map((suggestion, index) => <li key={index}><Icon name="spark" size={16} /><span>{suggestion}</span></li>)}</ul></section><section className="card"><span className="eyebrow">YOUR NEXT STEP</span><h2>按建议完善你的简历</h2><p className="muted">结合评分与解析内容，检查经历表达，补充具体行动和量化成果。</p><p className="muted">和 AI 逐条讨论建议、打磨项目表达，简历与诊断结果会自动带入对话。</p><button className="btn primary" disabled={busy} onClick={() => void discuss()}>{busy ? '正在打开…' : '和 AI 讨论改进建议'}</button><p className="muted">想练习如何讲清这些经历？可以带着这份简历进入面试室。</p><Link className="btn" to={`/interviews/new?resume=${encodeURIComponent(id)}`}>用这份简历练习<Icon name="arrow" size={17} /></Link></section></div><section className="card parsed-resume"><div className="section-heading"><div><span className="eyebrow">YOUR RESUME, ORGANIZED</span><h2>解析后的经历</h2></div></div>{data.parsed ? <ParsedValue value={data.parsed} /> : <p className="muted">暂无结构化解析内容。</p>}</section></>}</>;
 }

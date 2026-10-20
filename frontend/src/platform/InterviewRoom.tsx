@@ -49,13 +49,13 @@ function RoomPreparation({ id }: { id: string }) {
     } catch (err) { setError(errorMessage(err)) }
     finally { lock.current = false; setBusy(false) }
   };
-  const ready = resume.data?.status === 'ready' && !!resume.data.preparation?.questions?.length;
+  const ready = resume.data?.status === 'ready';
   return <section className="card recent-card" aria-live="polite"><h2>本次面试准备</h2>
     {resume.error && <Notice>{resume.error}<button className="text-button" onClick={() => void resume.refresh()}>重新加载</button></Notice>}
     {error && <Notice>{error}</Notice>}
     {!resume.data && !resume.error && <Loading text="正在读取面试简历…" />}
     {resume.data && <><p>{resume.data.filename} <Status value={resume.data.status} /></p>
-      {resume.data.status === 'failed' ? <><Notice>{resume.data.error ?? '简历准备失败，请重试。'}</Notice><button className="btn" disabled={busy} onClick={() => void run(true)}>重新准备</button></> : ready ? <p className="muted">简历已准备就绪，开始后面试官将直接提出第一个问题。</p> : resume.data.status === 'ready' ? <Notice>暂无可用面试题，请重新上传简历。</Notice> : <Loading text="正在解析简历并准备面试题，请稍候…" />}
+      {resume.data.status === 'failed' ? <><Notice>{resume.data.error ?? '简历准备失败，请重试。'}</Notice><button className="btn" disabled={busy} onClick={() => void run(true)}>重新准备</button></> : ready ? <p className="muted">简历已准备就绪，开始后将根据简历生成面试题，并提出第一个问题。</p> : resume.data.status === 'ready' ? <Notice>暂无可用面试题，请重新上传简历。</Notice> : <Loading text="正在解析简历并整理改进建议，请稍候…" />}
     </>}
     <button className="btn primary" disabled={!ready || busy || !!resume.error} onClick={() => void run(false)}>{busy ? '正在准备…' : '开始模拟面试'}<Icon name="arrow" size={17} /></button>
   </section>;

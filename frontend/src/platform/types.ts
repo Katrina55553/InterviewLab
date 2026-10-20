@@ -3,7 +3,7 @@ export interface Question { id: string; text: string; category?: string; main_in
 export interface Resume {
   id: string; filename: string; status: 'queued' | 'processing' | 'ready' | 'failed';
   parsed?: Record<string, unknown> | null;
-  preparation?: { resume_score: number | null; suggestions: string[]; questions: Question[]; demo?: boolean } | null;
+  preparation?: { resume_score: number | null; suggestions: string[]; questions?: Question[]; demo?: boolean } | null;
   error?: string | null; created_at: string;
 }
 export interface Message { id: string; role: string; content: string }

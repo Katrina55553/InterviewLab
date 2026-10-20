@@ -5,7 +5,7 @@ import copy
 import pytest
 import pytest_asyncio
 
-from app.platform.graph import interview_graph, preparation_graph, report_graph, report_numbers
+from app.platform.graph import generate_questions, interview_graph, preparation_graph, report_graph, report_numbers
 from app.platform.runtime import AIError
 
 
@@ -14,7 +14,8 @@ async def snapshot():
     prepared = await preparation_graph.ainvoke({
         "raw_text": "张三\nPython 后端工程师\n负责订单平台的接口、数据持久化、缓存与故障排查。", "configs": {}, "demo": True,
     })
-    return {"questions": prepared["preparation"]["questions"], "parsed": prepared["parsed"], "resume_score": 60,
+    generated = await generate_questions({**prepared, "demo": True})
+    return {"questions": generated["preparation"]["questions"], "parsed": prepared["parsed"], "resume_score": 60,
             "demo": True, "messages": [], "evaluations": [], "main_index": -1, "follow_up_count": 0,
             "current_question": None, "status": "ready"}
 
@@ -86,3 +87,26 @@ async def test_real_mode_rejects_missing_dimensions_instead_of_defaulting_scores
     with pytest.raises(AIError, match="五个"):
         await interview_graph.ainvoke({"snapshot": state["snapshot"], "configs": {"evaluate": {}},
                                        "command": {"type": "answer", "content": "answer"}})
+
+
+@pytest.mark.asyncio
+async def test_diagnosis_does_not_generate_questions(monkeypatch):
+    from app.platform import graph
+
+    async def diagnose(config, *args, **kwargs):
+        assert config["scene"] == "resume"
+        return {"parsed": {"skills": ["Python"]}, "resume_score": 80, "suggestions": ["补充成果数据"]}
+
+    monkeypatch.setattr(graph, "complete", diagnose)
+    result = await preparation_graph.ainvoke({"raw_text": "resume", "configs": {"resume": {"scene": "resume"}}, "demo": False})
+    assert "questions" not in result["preparation"]
+    assert result["preparation"]["suggestions"] == ["补充成果数据"]
+
+
+@pytest.mark.asyncio
+async def test_start_generates_questions_only_for_interview(snapshot):
+    snapshot["questions"] = []
+    result = await interview_graph.ainvoke({"snapshot": snapshot, "configs": {}, "command": {"type": "start"}})
+    assert len(result["snapshot"]["questions"]) == 5
+    assert len(result["snapshot"]["messages"]) == 1
+    assert snapshot["questions"] == []

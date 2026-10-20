@@ -97,7 +97,7 @@ async def create_interview(user_id: str, resume_id: str) -> dict:
         interview = Interview(
             id=new_id(), user_id=user_id, resume_id=resume.id, status="ready", version=0,
             config_snapshot=configs,
-            snapshot={"questions": copy.deepcopy(preparation["questions"]), "parsed": resume.parsed,
+            snapshot={"questions": [], "parsed": resume.parsed,
                       "resume_score": preparation["resume_score"], "demo": preparation["demo"],
                       "messages": [], "evaluations": [], "main_index": -1, "follow_up_count": 0,
                       "current_question": None, "status": "ready"},

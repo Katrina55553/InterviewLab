@@ -4,7 +4,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## 项目概述
 
-**AI 面试平台** — 用户登录 → 上传简历 → 解析、评分与五题生成 → LangGraph 多轮模拟面试 → 量化报告；另含 SSE 聊天、管理员模型与 Agent 配置、可选讯飞 ASR/TTS 和视觉建议。当前运行与架构文档以 `docs/platform.md` 为准。
+**AI 面试平台** — 用户登录 → 上传简历 → 解析、评分与改进建议 → LangGraph 多轮模拟面试 → 量化报告；另含 SSE 聊天、管理员模型与 Agent 配置、可选讯飞 ASR/TTS 和视觉建议。当前运行与架构文档以 `docs/platform.md` 为准。
 
 ## 当前平台入口
 
@@ -54,7 +54,7 @@ docker compose logs celery --tail 50
 
 ### 用户流程与 Agent
 
-登录 → 上传简历 → 异步解析、评分和五题生成 → 创建独立面试 → 逐命令运行 LangGraph → 量化报告。`backend/app/platform/graph.py` 包含准备、面试和报告图，服务层负责命令租约、版本校验、节点进度与事件提交。
+登录 → 上传简历 → 异步解析、评分和改进建议 → 创建独立面试 → 逐命令运行 LangGraph → 量化报告。`backend/app/platform/graph.py` 包含准备、面试和报告图，服务层负责命令租约、版本校验、节点进度与事件提交。
 
 `backend/app/core/tools.py` 提供简历字段查询与代码验证；新平台通过 `platform/runtime.py` 调用模型。真实模式失败不会自动替换为规则评分，演示模式必须显式开启。
 

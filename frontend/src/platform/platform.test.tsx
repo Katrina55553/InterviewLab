@@ -9,7 +9,7 @@ import type { Interview, Report, Resume } from './types';
 let container: HTMLDivElement;
 let root: Root;
 const report: Report = { overall_score: 84, resume_score: 80, dimensions: { professional: 85, project: 83, analysis: 82, logic: 86, completeness: 84 }, completion: { asked: 1, total: 1, answered: 1, skipped: 0 }, turns: [{ question: '请介绍一个项目。', answer: '我负责队列设计，最终减少延迟。', score: 84, feedback: '回答清晰，建议补充量化结果。' }], suggestions: ['加入具体的数据与结果。'], summary: '项目经历表达清晰。' };
-const resume: Resume = { id: 'r-1', filename: '我的简历.txt', status: 'ready', parsed: { skills: ['Python', 'React'] }, preparation: { resume_score: 80, suggestions: ['补充成果数据'], questions: [{ id: 'q1', text: '请介绍一个项目。', category: '项目经验' }] }, created_at: '2026-10-15T10:00:00Z' };
+const resume: Resume = { id: 'r-1', filename: '我的简历.txt', status: 'ready', parsed: { skills: ['Python', 'React'] }, preparation: { resume_score: 80, suggestions: ['补充成果数据'] }, created_at: '2026-10-15T10:00:00Z' };
 const initial: Interview = { id: 'i-1', resume_id: 'r-1', status: 'draft', version: 0, current_question: null, messages: [], evaluations: [], created_at: '2026-10-15T10:00:00Z' };
 let snapshot: Interview;
 let commands: Record<string, unknown>[];
@@ -42,6 +42,10 @@ beforeEach(() => {
   useAuth.setState({ user: { id: 'u-1', username: 'demo', role: 'user' }, loading: false, error: '' });
   vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
     const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+    if (url === '/api/chats' && options?.method === 'POST') return response({ id: 'c-1', title: '简历改进' });
+    if (url === '/api/chats') return response([]);
+    if (url === '/api/agents') return response([]);
+    if (url === '/api/chats/c-1') return response({ id: 'c-1', title: '简历改进', messages: [] });
     if (url === '/api/auth/me') return response({ id: 'u-1', username: 'demo', role: 'user' });
     if (url === '/api/resumes' && options?.method === 'POST') return response(resume);
     if (url === '/api/resumes') return response(resumeItems);
@@ -65,6 +69,15 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: originalMediaDevices }) });
 
 describe('platform user flows', () => {
+  it('opens a discussion with the diagnosed resume without creating an interview', async () => {
+    window.history.replaceState({}, '', '/resumes/r-1');
+    await act(async () => root.render(<App />)); await settle();
+    await click('和 AI 讨论改进建议');
+    expect(window.location.pathname).toBe('/chat/c-1');
+    const creation = vi.mocked(fetch).mock.calls.find(([url, options]) => url === '/api/chats' && options?.method === 'POST');
+    expect(JSON.parse(creation?.[1]?.body as string)).toEqual({ resume_id: 'r-1' });
+    expect(commands).toHaveLength(0);
+  });
   it('diagnoses a resume independently, then practices with it and opens the report', async () => {
     await act(async () => root.render(<App />)); await settle();
     expect(window.location.pathname).toBe('/resumes');
@@ -172,7 +185,7 @@ describe('platform user flows', () => {
       await act(async () => root.render(<App />));
       await act(async () => { await vi.advanceTimersByTimeAsync(30) });
       expect(button('开始模拟面试').disabled).toBe(true);
-      expect(container.textContent).toContain('正在解析简历并准备面试题');
+      expect(container.textContent).toContain('正在解析简历并整理改进建议');
       resumeDetail = structuredClone(resume);
       await act(async () => { await vi.advanceTimersByTimeAsync(2500) });
       expect(button('开始模拟面试').disabled).toBe(false);

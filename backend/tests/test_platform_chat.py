@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.database import Base
 from app.platform import auth, chat
-from app.platform.models import Agent, Chat, ChatMessage, Provider, User, new_id, utcnow
+from app.platform.models import Agent, Chat, ChatMessage, Provider, Resume, User, new_id, utcnow
 from app.platform.runtime import AIError
 
 
@@ -403,3 +403,29 @@ async def test_postgresql_parallel_chat_claim_and_expired_owner_fencing(monkeypa
         async with admin_engine.begin() as connection:
             await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         await admin_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_resume_discussion_preserves_context_and_ownership(chat_client):
+    client, sessions = chat_client
+    user = await register(client)
+    resume_id = new_id()
+    async with sessions() as db, db.begin():
+        db.add(Resume(id=resume_id, user_id=user["id"], filename="resume.txt", file_path="unused",
+                      status="ready", parsed={"skills": ["Python"]},
+                      preparation={"resume_score": 80, "suggestions": ["补充成果数据"], "demo": False}))
+    response = await client.post("/api/chats", json={"resume_id": resume_id}, headers=csrf(client))
+    assert response.status_code == 201, response.text
+    chat_id = response.json()["id"]
+    async with sessions() as db, db.begin():
+        for index in range(40):
+            db.add(ChatMessage(id=new_id(), chat_id=chat_id, role="user", content=f"follow up {index}",
+                               status="completed", created_at=utcnow() + timedelta(seconds=index + 1)))
+    claim = await chat._claim(chat_id, user["id"], chat.MessageCreate(content="怎么改项目经历？", request_id="resume-follow-up"))
+    assert "补充成果数据" in claim.messages[0]["content"]
+    assert "Python" in claim.messages[0]["content"]
+    assert claim.messages[0]["role"] == "user"
+    await client.post("/api/auth/logout", headers=csrf(client))
+    await register(client, "other_owner")
+    denied = await client.post("/api/chats", json={"resume_id": resume_id}, headers=csrf(client))
+    assert denied.status_code == 404

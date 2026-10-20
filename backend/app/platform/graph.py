@@ -103,6 +103,12 @@ async def collect_answer(state: RunState) -> dict:
     action = state["command"]["type"]
     current = snapshot.get("current_question")
     if action == "start":
+        if not snapshot.get("questions"):
+            generated = await generate_questions({
+                "parsed": snapshot["parsed"], "preparation": {},
+                "configs": state["configs"], "demo": snapshot["demo"],
+            })
+            snapshot["questions"] = generated["preparation"]["questions"]
         _main_question(snapshot, 0)
         return {"snapshot": snapshot, "next": "done"}
     if action == "end":
@@ -220,10 +226,8 @@ async def generate_report(state: RunState) -> dict:
 def _graphs():
     prepare = StateGraph(RunState)
     prepare.add_node("score", score_resume)
-    prepare.add_node("questions", generate_questions)
     prepare.set_entry_point("score")
-    prepare.add_edge("score", "questions")
-    prepare.add_edge("questions", END)
+    prepare.add_edge("score", END)
     turn = StateGraph(RunState)
     turn.add_node("collect", collect_answer)
     turn.add_node("evaluate", evaluate_answer)
