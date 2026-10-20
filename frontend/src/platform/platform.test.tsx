@@ -14,6 +14,11 @@ const initial: Interview = { id: 'i-1', resume_id: 'r-1', status: 'draft', versi
 let snapshot: Interview;
 let commands: Record<string, unknown>[];
 let failCommand = false;
+let resumeItems: Resume[];
+let resumeDetail: Resume;
+const originalMediaDevices = navigator.mediaDevices;
+let cameraStop: ReturnType<typeof vi.fn>;
+let cameraRequest: ReturnType<typeof vi.fn>;
 
 async function settle() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 25)) }) }
 function button(label: string) { const element = [...container.querySelectorAll('button')].find(item => item.textContent?.includes(label)); if (!element) throw new Error(`Button ${label} not found`); return element }
@@ -27,6 +32,11 @@ async function type(selector: string, value: string) {
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   Element.prototype.scrollIntoView = vi.fn();
+  cameraStop = vi.fn();
+  cameraRequest = vi.fn(async () => ({ getTracks: () => [{ stop: cameraStop }] }));
+  Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: cameraRequest } });
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
+  resumeItems = [resume]; resumeDetail = structuredClone(resume);
   sessionStorage.clear(); commands = []; failCommand = false; snapshot = structuredClone(initial);
   window.history.replaceState({}, '', '/');
   useAuth.setState({ user: { id: 'u-1', username: 'demo', role: 'user' }, loading: false, error: '' });
@@ -34,8 +44,9 @@ beforeEach(() => {
     const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
     if (url === '/api/auth/me') return response({ id: 'u-1', username: 'demo', role: 'user' });
     if (url === '/api/resumes' && options?.method === 'POST') return response(resume);
-    if (url === '/api/resumes') return response([resume]);
-    if (url === '/api/resumes/r-1') return response(resume);
+    if (url === '/api/resumes') return response(resumeItems);
+    if (url === '/api/resumes/r-1/retry') { resumeDetail = structuredClone(resume); return response(resumeDetail) }
+    if (url === '/api/resumes/r-1') return response(resumeDetail);
     if (url === '/api/interviews' && options?.method === 'POST') return response(snapshot);
     if (url === '/api/interviews') return response([snapshot]);
     if (url === '/api/interviews/i-1') return response(snapshot);
@@ -51,30 +62,128 @@ beforeEach(() => {
   }));
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
 });
-afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals() });
+afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: originalMediaDevices }) });
 
 describe('platform user flows', () => {
-  it('uploads a resume, previews real preparation, answers the current question and opens the report', async () => {
+  it('diagnoses a resume independently, then practices with it and opens the report', async () => {
     await act(async () => root.render(<App />)); await settle();
-    expect(container.textContent).toContain('开启新的练习');
+    expect(container.textContent).toContain('简历诊断');
     const input = container.querySelector('input[type=file]') as HTMLInputElement;
     Object.defineProperty(input, 'files', { configurable: true, value: [new File(['skills Python React'], '我的简历.txt', { type: 'text/plain' })] });
     await act(async () => input.dispatchEvent(new Event('change', { bubbles: true }))); await settle();
     expect(window.location.pathname).toBe('/resumes/r-1');
     expect(container.textContent).toContain('补充成果数据');
-    expect(container.textContent).toContain('请介绍一个项目。');
-    await click('进入模拟面试');
+    expect(container.textContent).not.toContain('请介绍一个项目。');
+    expect(vi.mocked(fetch).mock.calls.filter(([url, options]) => url === '/api/interviews' && options?.method === 'POST')).toHaveLength(0);
+    await act(async () => (container.querySelector('a[href^="/interviews/new?resume="]') as HTMLAnchorElement).click()); await settle();
+    expect(window.location.pathname).toBe('/interviews/new');
     await click('开始模拟面试');
     expect(commands[0]).toMatchObject({ type: 'start', version: 0, expected_question_id: null });
     await type('#interview-answer', '我负责队列设计，最终减少延迟。');
     await click('提交回答');
+    expect(cameraStop).toHaveBeenCalled();
     expect(commands[1]).toMatchObject({ type: 'answer', version: 1, expected_question_id: 'q1', content: '我负责队列设计，最终减少延迟。' });
     expect(commands[0].request_id).not.toBe(commands[1].request_id);
     const reportLink = container.querySelector('a[href="/interviews/i-1/report"]') as HTMLAnchorElement;
     await act(async () => reportLink.click()); await settle();
     expect(container.textContent).toContain('面试综合得分');
+    expect(cameraStop).toHaveBeenCalled();
     expect(container.textContent).toContain('回答清晰，建议补充量化结果。');
     expect(container.querySelector('svg[aria-label*="专业能力 85"]')).not.toBeNull();
+  });
+  it('enters the room without a resume and uploads there before creating an interview', async () => {
+    resumeItems = [];
+    await act(async () => root.render(<App />)); await settle();
+    await act(async () => (container.querySelector('.page a[href="/interviews/new"]') as HTMLAnchorElement).click()); await settle();
+    expect(window.location.pathname).toBe('/interviews/new');
+    expect(container.textContent).toContain('模拟面试室');
+    expect(container.textContent).toContain('面试官已就绪');
+    expect(cameraRequest).toHaveBeenCalledTimes(1);
+    expect(cameraRequest).toHaveBeenCalledWith({ video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+    expect(container.querySelector('video')!.className).not.toContain('hidden');
+    expect(button('提交回答').disabled).toBe(true);
+    expect(vi.mocked(fetch).mock.calls.filter(([url, options]) => url === '/api/interviews' && options?.method === 'POST')).toHaveLength(0);
+    const input = container.querySelector('input[type=file]') as HTMLInputElement;
+    Object.defineProperty(input, 'files', { configurable: true, value: [new File(['Python'], 'resume.txt', { type: 'text/plain' })] });
+    await act(async () => input.dispatchEvent(new Event('change', { bubbles: true }))); await settle();
+    expect(window.location.pathname).toBe('/interviews/new');
+    expect(window.location.search).toBe('?resume=r-1');
+    expect(container.textContent).not.toContain('补充成果数据');
+    await click('开始模拟面试');
+    expect(window.location.pathname).toBe('/interviews/i-1');
+    expect(cameraRequest).toHaveBeenCalledTimes(1);
+    expect(cameraStop).not.toHaveBeenCalled();
+    expect(commands).toHaveLength(1);
+    expect(commands[0].type).toBe('start');
+    const create = vi.mocked(fetch).mock.calls.find(([url, options]) => url === '/api/interviews' && options?.method === 'POST');
+    expect(JSON.parse(create![1]!.body as string)).toEqual({ resume_id: 'r-1' });
+  });
+  it('consumes the start action and does not start again when the interview is reopened', async () => {
+    window.history.replaceState({}, '', '/interviews/new?resume=r-1');
+    await act(async () => root.render(<App />)); await settle();
+    await click('开始模拟面试');
+    expect(commands).toHaveLength(1);
+    expect(window.history.state.usr).toBeNull();
+    snapshot = structuredClone(initial);
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await act(async () => root.render(<App />)); await settle();
+    expect(commands).toHaveLength(1);
+    expect(button('开始模拟面试').disabled).toBe(false);
+  });
+  it('continues the interview when camera permission is denied', async () => {
+    cameraRequest.mockRejectedValueOnce(new DOMException('摄像头权限被拒绝', 'NotAllowedError'));
+    window.history.replaceState({}, '', '/interviews/new?resume=r-1');
+    await act(async () => root.render(<App />)); await settle();
+    expect(container.textContent).toContain('摄像头权限未获允许');
+    expect(button('开始模拟面试').disabled).toBe(false);
+    await click('开始模拟面试');
+    expect(commands[0].type).toBe('start');
+    expect(cameraRequest).toHaveBeenCalledTimes(1);
+  });
+  it('keeps an explicitly closed camera off when the first question starts', async () => {
+    window.history.replaceState({}, '', '/interviews/new?resume=r-1');
+    await act(async () => root.render(<App />)); await settle();
+    await click('关闭摄像头');
+    expect(cameraStop).toHaveBeenCalledTimes(1);
+    await click('开始模拟面试');
+    expect(cameraRequest).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('video')!.className).toContain('hidden');
+    expect(commands[0].type).toBe('start');
+  });
+  it('releases a late camera grant after leaving the room', async () => {
+    let grant!: (media: { getTracks: () => { stop: typeof cameraStop }[] }) => void;
+    cameraRequest.mockImplementationOnce(() => new Promise(resolve => { grant = resolve }));
+    window.history.replaceState({}, '', '/interviews/new');
+    await act(async () => root.render(<App />)); await settle();
+    await act(async () => (container.querySelector('a[href="/history"]') as HTMLAnchorElement).click()); await settle();
+    await act(async () => grant({ getTracks: () => [{ stop: cameraStop }] }));
+    expect(cameraStop).toHaveBeenCalledTimes(1);
+  });
+  it('waits for preparation to finish before allowing an interview', async () => {
+    window.history.replaceState({}, '', '/interviews/new?resume=r-1');
+    resumeDetail = { ...resume, status: 'processing', preparation: null };
+    vi.useFakeTimers();
+    const visibility = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    try {
+      await act(async () => root.render(<App />));
+      await act(async () => { await vi.advanceTimersByTimeAsync(30) });
+      expect(button('开始模拟面试').disabled).toBe(true);
+      expect(container.textContent).toContain('正在解析简历并准备面试题');
+      resumeDetail = structuredClone(resume);
+      await act(async () => { await vi.advanceTimersByTimeAsync(2500) });
+      expect(button('开始模拟面试').disabled).toBe(false);
+    } finally { visibility.mockRestore(); vi.useRealTimers() }
+  });
+  it('allows an explicit preparation retry inside the room', async () => {
+    window.history.replaceState({}, '', '/interviews/new?resume=r-1');
+    resumeDetail = { ...resume, status: 'failed', error: '供应商暂不可用', preparation: null };
+    await act(async () => root.render(<App />)); await settle();
+    expect(container.textContent).toContain('供应商暂不可用');
+    expect(button('开始模拟面试').disabled).toBe(true);
+    await click('重新准备');
+    expect(button('开始模拟面试').disabled).toBe(false);
+    expect(commands).toHaveLength(0);
   });
   it('preserves an unknown command after a network failure and never blindly resends it', async () => {
     window.history.replaceState({}, '', '/interviews/i-1'); failCommand = true;

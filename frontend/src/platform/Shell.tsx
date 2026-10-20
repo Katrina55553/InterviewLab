@@ -55,6 +55,8 @@ function SidebarContent({ user, busy, onLeave, onNavigate, onClose }: {
     <nav className="sidebar-nav" aria-label="主导航">
       <span className="sidebar-section-label">我的研习室</span>
       <NavLink end to="/" onClick={onNavigate}><Icon name="dashboard" size={19} /><span>工作台</span></NavLink>
+      <NavLink to="/resumes" onClick={onNavigate}><Icon name="file" size={19} /><span>简历诊断</span></NavLink>
+      <NavLink to="/interviews/new" onClick={onNavigate}><Icon name="chat" size={19} /><span>模拟面试</span></NavLink>
       <NavLink to="/history" onClick={onNavigate}><Icon name="clock" size={19} /><span>面试记录</span></NavLink>
       <NavLink to="/chat" onClick={onNavigate}><Icon name="chat" size={19} /><span>AI 对话</span></NavLink>
       {user?.role === 'admin' && <><span className="sidebar-section-label sidebar-admin-label">管理</span><NavLink to="/admin" onClick={onNavigate}><Icon name="settings" size={19} /><span>管理设置</span></NavLink></>}

@@ -40,7 +40,7 @@ try {
   await page.getByLabel('用户名', { exact: true }).fill(username);
   await page.getByLabel('密码', { exact: true }).fill(password);
   await page.getByRole('button', { name: '创建账号', exact: true }).click();
-  await page.getByRole('heading', { name: '开启新的练习' }).waitFor();
+  await page.getByRole('heading', { name: '简历诊断' }).waitFor();
   await page.screenshot({ path: resolve(output, '02-dashboard.png'), fullPage: true });
   assert.equal(await page.getByRole('link', { name: '管理设置', exact: true }).count(), 0);
   const cookies = await context.cookies();
@@ -52,13 +52,12 @@ try {
   });
   await page.waitForURL(/\/resumes\//);
   const resumeId = page.url().split('/').at(-1);
-  await page.getByRole('button', { name: '进入模拟面试' }).waitFor({ timeout: 90000 });
+  await page.getByRole('link', { name: '用这份简历练习' }).waitFor({ timeout: 90000 });
   assert.ok(await page.getByText('演示模式 · 非真实 AI 评估').count());
   await page.screenshot({ path: resolve(output, '03-preparation.png'), fullPage: true });
-  await page.getByRole('button', { name: '进入模拟面试' }).click();
-  await page.waitForURL(/\/interviews\/[^/]+$/);
-  const interviewId = page.url().split('/').at(-1);
+  await page.getByRole('link', { name: '用这份简历练习' }).click();
   let current = await commandClick('开始模拟面试');
+  const interviewId = current.id;
   assert.equal(current.version, 1);
   const question = current.current_question;
   await page.reload();
@@ -82,10 +81,9 @@ try {
   await page.screenshot({ path: resolve(output, '05-report.png'), fullPage: true });
   // A second session checks follow-up, rephrasing, explicit skip=0 and early ending.
   await page.goto(`${base}/resumes/${resumeId}`);
-  await page.getByRole('button', { name: '进入模拟面试' }).click();
-  await page.waitForURL(/\/interviews\/[^/]+$/);
-  const partialId = page.url().split('/').at(-1);
-  await commandClick('开始模拟面试');
+  await page.getByRole('link', { name: '用这份简历练习' }).click();
+  const started = await commandClick('开始模拟面试');
+  const partialId = started.id;
   await page.getByLabel('你的回答', { exact: true }).fill('用了 Redis。');
   let partial = await commandClick('提交回答');
   assert.equal(partial.current_question.is_followup, true);
@@ -124,7 +122,7 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: '打开导航菜单', exact: true }).click();
   await page.getByRole('link', { name: '工作台', exact: true }).click();
-  await page.getByRole('heading', { name: '开启新的练习' }).waitFor();
+  await page.getByRole('heading', { name: '简历诊断' }).waitFor();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   await page.screenshot({ path: resolve(output, '07-mobile-dashboard.png'), fullPage: true });
   await page.getByRole('button', { name: '打开导航菜单', exact: true }).click();
@@ -133,7 +131,7 @@ try {
   await page.getByLabel('用户名', { exact: true }).fill(username);
   await page.getByLabel('密码', { exact: true }).fill(password);
   await page.getByRole('button', { name: '登录研习室', exact: true }).click();
-  await page.getByRole('heading', { name: '开启新的练习' }).waitFor();
+  await page.getByRole('heading', { name: '简历诊断' }).waitFor();
   assert.deepEqual(failures, [], `Browser errors: ${failures.join('; ')}`);
   console.log(JSON.stringify({ passed: true, username, interviewId, chatId, screenshots: output, checks: ['cookie auth + CSRF', 'resume preparation', 'same question after reload', '5 persisted answer evaluations', 'followup + rephrase', 'skip=0 + early end', 'async report', 'SSE chat persistence', 'mobile layout', 'logout + login'] }, null, 2));
 } catch (error) {

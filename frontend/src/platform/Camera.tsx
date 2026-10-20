@@ -1,37 +1,75 @@
-import { useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { Outlet } from 'react-router-dom';
 import { api, errorMessage } from './api';
 import { Icon, Notice } from './ui';
 
-export function CameraPanel({ interviewId, enabled, active }: { interviewId: string; enabled: boolean; active: boolean }) {
-  const [camera, setCamera] = useState(false);
+type CameraSession = { media: MediaStream | null; starting: boolean; error: string; start: () => Promise<void>; stop: () => void };
+const CameraContext = createContext<CameraSession | null>(null);
+
+// Keep the device open while moving from resume collection to interview questions.
+export function InterviewRoomLayout() {
+  const [media, setMedia] = useState<MediaStream | null>(null);
   const [starting, setStarting] = useState(false);
-  const [feedback, setFeedback] = useState('');
   const [error, setError] = useState('');
-  const video = useRef<HTMLVideoElement>(null);
   const stream = useRef<MediaStream | null>(null);
-  const request = useRef<AbortController | null>(null);
   const session = useRef(0);
-  const stop = () => {
-    session.current++;
+  const pending = useRef(false);
+  const release = useCallback(() => {
+    session.current++; pending.current = false;
     stream.current?.getTracks().forEach(track => track.stop());
     stream.current = null;
-    request.current?.abort();
-    request.current = null;
-    setCamera(false); setStarting(false);
-  };
-  const start = async () => {
-    setError(''); setStarting(true);
+  }, []);
+  const stop = useCallback(() => { release(); setMedia(null); setStarting(false) }, [release]);
+  const start = useCallback(async () => {
+    if (pending.current || stream.current) return;
+    pending.current = true; setError(''); setStarting(true);
     const current = ++session.current;
     try {
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('摄像头需要 HTTPS 或本机 localhost。');
-      const media = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
-      if (current !== session.current) { media.getTracks().forEach(track => track.stop()); return }
-      stream.current = media; setCamera(true); setStarting(false);
-      if (video.current) { video.current.srcObject = media; await video.current.play() }
-    } catch (err) { if (current === session.current) { setError(errorMessage(err)); stop() } }
-  };
+      const next = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+      if (current !== session.current) { next.getTracks().forEach(track => track.stop()); return }
+      stream.current = next; setMedia(next);
+    } catch (err) {
+      if (current === session.current) {
+        const name = err && typeof err === 'object' && 'name' in err ? err.name : '';
+        setError(name === 'NotAllowedError' ? '摄像头权限未获允许，可在浏览器设置中开启，也可以继续文字面试。' : name === 'NotFoundError' ? '未找到摄像头，你仍可继续文字面试。' : errorMessage(err));
+      }
+    } finally {
+      if (current === session.current) { pending.current = false; setStarting(false) }
+    }
+  }, []);
   useEffect(() => {
-    if (!camera || !active) return;
+    let mounted = true;
+    queueMicrotask(() => { if (mounted) void start() });
+    return () => { mounted = false; release() };
+  }, [start, release]);
+  return <CameraContext.Provider value={{ media, starting, error, start, stop }}><Outlet /></CameraContext.Provider>;
+}
+
+export function CameraPanel({ interviewId, enabled, active, finished = false }: { interviewId?: string; enabled: boolean; active: boolean; finished?: boolean }) {
+  const session = useContext(CameraContext);
+  const stop = session?.stop;
+  useEffect(() => { if (finished) stop?.() }, [finished, stop]);
+  if (finished) return null;
+  if (!session) throw new Error('CameraPanel requires InterviewRoomLayout');
+  return <CameraPreview {...session} interviewId={interviewId} enabled={enabled} active={active} />;
+}
+
+function CameraPreview({ media, starting, error: cameraError, start, stop, interviewId, enabled, active }: CameraSession & { interviewId?: string; enabled: boolean; active: boolean }) {
+  const camera = !!media;
+  const [feedback, setFeedback] = useState('');
+  const [error, setError] = useState('');
+  const video = useRef<HTMLVideoElement>(null);
+  const request = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const element = video.current;
+    if (!element) return;
+    element.srcObject = media;
+    if (media) void element.play().catch(() => { /* The browser can resume playback after interaction. */ });
+    return () => { element.srcObject = null };
+  }, [media]);
+  useEffect(() => {
+    if (!camera || !active || !enabled || !interviewId) return;
     let stopped = false;
     const capture = async () => {
       if (!video.current || !video.current.videoWidth || request.current) return;
@@ -39,7 +77,7 @@ export function CameraPanel({ interviewId, enabled, active }: { interviewId: str
       canvas.width = 640; canvas.height = Math.round(video.current.videoHeight / video.current.videoWidth * 640);
       canvas.getContext('2d')?.drawImage(video.current, 0, 0, canvas.width, canvas.height);
       const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.7));
-      if (!blob || !stream.current || stopped || request.current) return;
+      if (!blob || !media || stopped || request.current) return;
       const controller = new AbortController(); request.current = controller;
       const form = new FormData(); form.append('file', blob, 'practice.jpg');
       try {
@@ -53,7 +91,6 @@ export function CameraPanel({ interviewId, enabled, active }: { interviewId: str
     };
     const timer = window.setInterval(() => void capture(), 5000);
     return () => { stopped = true; window.clearInterval(timer); request.current?.abort(); request.current = null };
-  }, [camera, active, interviewId]);
-  useEffect(() => () => { session.current++; stream.current?.getTracks().forEach(track => track.stop()); request.current?.abort() }, [interviewId]);
-  return <section className="card camera-card"><div className="section-heading"><h3><Icon name="camera" size={18} />仪态练习</h3>{camera ? <button className="text-button" onClick={stop}>关闭摄像头</button> : <button className="text-button" disabled={!enabled || !active || starting} onClick={() => void start()}>{starting ? '正在开启…' : '开启摄像头'}</button>}</div><video ref={video} muted playsInline className={camera ? 'camera-preview' : 'camera-preview hidden'} aria-label="摄像头预览" />{!camera && <p className="muted small">{enabled ? '主动开启后，每 5 秒抽取一帧提供表达与仪态建议。' : '管理员尚未启用视觉模型。'}</p>}<p className="small muted">仪态反馈单独展示，不计入答题得分。</p>{feedback && <p className="camera-feedback">{feedback}</p>}{error && <Notice>{error}</Notice>}</section>;
+  }, [camera, media, active, enabled, interviewId]);
+  return <section className="card camera-card"><div className="section-heading"><h3><Icon name="camera" size={18} />摄像头</h3>{camera ? <button className="text-button" onClick={stop}>关闭摄像头</button> : <button className="text-button" disabled={starting} onClick={() => void start()}>{starting ? '正在开启…' : '开启摄像头'}</button>}</div><video ref={video} muted playsInline className={camera ? 'camera-preview' : 'camera-preview hidden'} aria-label="摄像头预览" />{!camera && <p className="muted small">{starting ? '请在浏览器中允许使用摄像头。' : '摄像头未开启，你仍可继续面试。'}</p>}<p className="small muted">{enabled && interviewId ? '面试中每 5 秒提供一次仪态建议，不计入答题得分。' : '当前仅在本机预览，不上传摄像头画面。'}</p>{feedback && <p className="camera-feedback">{feedback}</p>}{(cameraError || error) && <Notice>{cameraError || error}</Notice>}</section>;
 }

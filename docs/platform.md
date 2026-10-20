@@ -1,6 +1,6 @@
 # Python AI 面试平台
 
-本次扩展保留 FastAPI、LangGraph、React/Zustand、PostgreSQL、Redis。主流程是上传简历 → 评分出题 → 面试 → 报告。旧匿名 `/api/sessions`、独立诊断页面和旧 WebSocket 协议不再对外注册；原工具、解析及 RAG 模块仍被新平台复用。
+本次扩展保留 FastAPI、LangGraph、React/Zustand、PostgreSQL、Redis。简历诊断与模拟面试提供独立入口：`/resumes` 上传简历查看评分和建议；`/interviews/new` 可直接进入面试室，再在室内上传或选择简历，简历在面试对话区收集，准备完成后点击开始即直接出题，最终生成报告。进入面试室即请求摄像头权限，右侧显示本机预览；未授权或手动关闭不阻塞面试。摄像头在简历收集与问答之间保持开启，离开面试室或结束面试后释放。诊断页保留携带简历进入面试室的快捷入口。后端仍复用简历解析、评分和五题生成的准备任务，未选择或未准备好的简历不会创建面试记录。旧匿名 `/api/sessions`、独立诊断页面和旧 WebSocket 协议不再对外注册；原工具、解析及 RAG 模块仍被新平台复用。
 
 ## 启动
 
@@ -50,7 +50,7 @@ python -m app.platform.cli reset-dev --confirm RESET-PLATFORM
 | 4 可靠性 | Single-flight、快照、CAS | PG 命令账本与 JSONB 快照、短事务、租约、Redis 协调、outbox | 并发提交、重启、过期执行者回写、重复任务与 Redis 丢失实验 |
 | 5 对话配置 | Spring AI、Agent 配置 | AsyncOpenAI 网关、SSE、管理员供应商与角色配置 | 配置版本变化不影响已有面试，密钥不出现在响应中 |
 | 6 语音 | AST WebSocket、长文本 TTS | 音频代理、增量归并、有界队列、持久合成任务 | 识别修订不重复；转写可编辑；关闭页面释放麦克风 |
-| 7 视觉交付 | 神态工作流、完整部署 | 可选视觉模型、独立反馈、5 秒节流、私有媒体存储 | 摄像头默认关闭，关闭即停止；视觉不影响答题分数 |
+| 7 视觉交付 | 神态工作流、完整部署 | 可选视觉模型、独立反馈、5 秒节流、私有媒体存储 | 进入面试室请求开启摄像头，关闭即停止；视觉不影响答题分数 |
 
 PostgreSQL 是权威数据源。Redis 保存协调信息和通知，丢失后可从数据库恢复。简历、独立面试、命令、事件、聊天及媒体任务有清晰归属；文件不公开挂载。
 
@@ -71,7 +71,7 @@ Outbox 与业务状态同事务提交，独立 dispatcher 发布 Celery 任务�
 - `/api/chats`：会话管理、附件及 SSE 消息；同一请求 ID 完成后可重放，断流保存部分内容。
 - `/api/admin/providers`、`/api/admin/agents`：供应商及版本化角色管理。内置场景为 resume/questions/evaluate/followup/report/chat/vision；无场景的 Agent 可用于自定义聊天。
 - `/api/media`、`/ws/asr/{interview_id}`：能力查询、语音合成和实时转写。
-- `/api/interviews/{id}/vision`：主动上传截图取得独立建议，不保存截图或原始视频。
+- `/api/interviews/{id}/vision`：视觉能力启用时上传截图取得独立建议，不保存截图或原始视频。
 
 命令格式：
 
