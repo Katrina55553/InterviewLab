@@ -66,6 +66,7 @@
 .page-chat .chat-sidebar{min-height:0;overflow-y:auto}
 .page-chat .chat-main{min-height:0}
 .page-chat .chat-messages{min-height:0;max-height:none;overscroll-behavior:contain}
+.page-chat .chat-messages-empty{display:flex;flex-direction:column;justify-content:center}.page-chat .chat-messages-empty>.empty{flex-shrink:0}
 .page-chat .conversation-title,.page-chat .chat-composer,.page-chat .chat-main>.notice{flex-shrink:0}
 @media(max-width:850px){.platform-content.chat-workspace{height:calc(100dvh - 73px)}.page.page-chat{padding:18px}.page-chat .chat-layout{grid-template-columns:170px minmax(0,1fr)}}
 @media(max-width:600px){.platform-content.chat-workspace{height:calc(100dvh - 67px)}.page.page-chat{padding:12px}.page-chat .chat-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}.page-chat .chat-sidebar{max-height:150px}.page-chat .chat-sessions{max-height:none}.page-chat .chat-welcome{padding:12px 0}.page-chat .chat-composer textarea{min-height:65px}}
