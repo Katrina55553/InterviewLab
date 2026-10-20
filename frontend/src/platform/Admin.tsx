@@ -7,7 +7,7 @@ import { useResource } from './hooks';
 import type { Agent, Capabilities, Provider } from './types';
 import { Empty, Icon, Notice } from './ui';
 
-const sceneLabels: Record<string, string> = { resume: '简历评分', questions: '面试出题', evaluate: '回答评分', followup: '追问', report: '报告', chat: 'AI 对话', vision: '仪态反馈' };
+const sceneLabels: Record<string, string> = { resume: '简历评分', questions: '面试出题', evaluate: '回答评分', followup: '追问', report: '报告', chat: 'JD分析', vision: '仪态反馈' };
 const tools = ['lookup_resume_field', 'verify_code_snippet'];
 const blankProvider = { name: '', base_url: '', model: '', api_key: '', enabled: true, vision: false };
 const blankAgent = { name: '', scene: '', provider_id: '', prompt: '', tools: [] as string[], enabled: true };

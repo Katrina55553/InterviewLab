@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './auth';
 import { errorMessage } from './api';
 import { Icon, Loading, Notice } from './ui';
@@ -55,9 +55,9 @@ function SidebarContent({ user, busy, onLeave, onNavigate, onClose }: {
     <nav className="sidebar-nav" aria-label="主导航">
       <span className="sidebar-section-label">我的研习室</span>
       <NavLink to="/resumes" onClick={onNavigate}><Icon name="file" size={19} /><span>简历诊断</span></NavLink>
+      <NavLink to="/chat" onClick={onNavigate}><Icon name="chat" size={19} /><span>JD分析</span></NavLink>
       <NavLink to="/interviews/new" onClick={onNavigate}><Icon name="chat" size={19} /><span>模拟面试</span></NavLink>
       <NavLink to="/history" onClick={onNavigate}><Icon name="clock" size={19} /><span>面试记录</span></NavLink>
-      <NavLink to="/chat" onClick={onNavigate}><Icon name="chat" size={19} /><span>AI 对话</span></NavLink>
       {user?.role === 'admin' && <><span className="sidebar-section-label sidebar-admin-label">管理</span><NavLink to="/admin" onClick={onNavigate}><Icon name="settings" size={19} /><span>管理设置</span></NavLink></>}
     </nav>
     <div className="sidebar-bottom">
@@ -72,6 +72,8 @@ function SidebarContent({ user, busy, onLeave, onNavigate, onClose }: {
 }
 
 function Shell() {
+  const { pathname } = useLocation();
+  const isChat = pathname === '/chat' || pathname.startsWith('/chat/');
   const { user, logout } = useAuth();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -100,8 +102,8 @@ function Shell() {
     <dialog ref={menu} id="mobile-navigation" className="sidebar-dialog" aria-label="导航菜单" onClose={() => setMenuOpen(false)} onClick={event => { if (event.target === event.currentTarget) closeMenu() }}>
       <SidebarContent {...sidebarProps} onNavigate={closeMenu} onClose={closeMenu} />
     </dialog>
-    <div className="platform-content">
-      <main className="page">{error && <Notice>{error}</Notice>}<Outlet /></main>
+    <div className={`platform-content${isChat ? ' chat-workspace' : ''}`}>
+      <main className={`page${isChat ? ' page-chat' : ''}`}>{error && <Notice>{error}</Notice>}<Outlet /></main>
       <footer className="footer"><span>面试研习室</span><span>认真准备，自信表达。</span><span>AI 建议仅供练习参考</span></footer>
     </div>
   </div>;
