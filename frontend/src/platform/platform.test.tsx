@@ -67,6 +67,9 @@ afterEach(async () => { await act(async () => root.unmount()); container.remove(
 describe('platform user flows', () => {
   it('diagnoses a resume independently, then practices with it and opens the report', async () => {
     await act(async () => root.render(<App />)); await settle();
+    expect(window.location.pathname).toBe('/resumes');
+    expect(container.textContent).not.toContain('工作台');
+    expect(cameraRequest).not.toHaveBeenCalled();
     expect(container.textContent).toContain('简历诊断');
     const input = container.querySelector('input[type=file]') as HTMLInputElement;
     Object.defineProperty(input, 'files', { configurable: true, value: [new File(['skills Python React'], '我的简历.txt', { type: 'text/plain' })] });
@@ -94,7 +97,7 @@ describe('platform user flows', () => {
   it('enters the room without a resume and uploads there before creating an interview', async () => {
     resumeItems = [];
     await act(async () => root.render(<App />)); await settle();
-    await act(async () => (container.querySelector('.page a[href="/interviews/new"]') as HTMLAnchorElement).click()); await settle();
+    await act(async () => (container.querySelector('.app-sidebar a[href="/interviews/new"]') as HTMLAnchorElement).click()); await settle();
     expect(window.location.pathname).toBe('/interviews/new');
     expect(container.textContent).toContain('模拟面试室');
     expect(container.textContent).toContain('面试官已就绪');
@@ -204,7 +207,7 @@ describe('platform user flows', () => {
   it('keeps administrative controls unavailable to normal users', async () => {
     window.history.replaceState({}, '', '/admin');
     await act(async () => root.render(<App />)); await settle();
-    expect(window.location.pathname).toBe('/');
+    expect(window.location.pathname).toBe('/resumes');
     expect(container.textContent).not.toContain('管理设置');
     expect(container.textContent).not.toContain('保存模型配置');
   });

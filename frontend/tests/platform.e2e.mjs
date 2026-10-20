@@ -41,7 +41,7 @@ try {
   await page.getByLabel('密码', { exact: true }).fill(password);
   await page.getByRole('button', { name: '创建账号', exact: true }).click();
   await page.getByRole('heading', { name: '简历诊断' }).waitFor();
-  await page.screenshot({ path: resolve(output, '02-dashboard.png'), fullPage: true });
+  await page.screenshot({ path: resolve(output, '02-resumes.png'), fullPage: true });
   assert.equal(await page.getByRole('link', { name: '管理设置', exact: true }).count(), 0);
   const cookies = await context.cookies();
   assert.ok(cookies.find(cookie => cookie.name === 'ra_session')?.httpOnly);
@@ -121,10 +121,10 @@ try {
   await page.locator('.message-assistant').first().waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: '打开导航菜单', exact: true }).click();
-  await page.getByRole('link', { name: '工作台', exact: true }).click();
+  await page.getByRole('link', { name: '简历诊断', exact: true }).click();
   await page.getByRole('heading', { name: '简历诊断' }).waitFor();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
-  await page.screenshot({ path: resolve(output, '07-mobile-dashboard.png'), fullPage: true });
+  await page.screenshot({ path: resolve(output, '07-mobile-resumes.png'), fullPage: true });
   await page.getByRole('button', { name: '打开导航菜单', exact: true }).click();
   await page.getByRole('button', { name: '退出', exact: true }).click();
   await page.getByRole('heading', { name: '欢迎回来' }).waitFor();
