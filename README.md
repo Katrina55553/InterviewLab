@@ -1,478 +1,262 @@
-<div align="center">
+# ResumeAgent · AI 面试平台
 
-> 当前版本已扩展为 Python AI 面试平台：账号、简历评分出题、独立面试历史、LangGraph、多轮报告、聊天、管理员配置及可选语音/视觉。请优先阅读 [平台运行与架构说明](docs/platform.md)；下方为原版项目介绍。
+基于 FastAPI、LangGraph 和 React 的 AI 面试平台，支持账号登录、简历解析与评分、多轮模拟面试和量化报告，并提供 AI 聊天、管理员模型配置及可选语音与视觉建议。
 
-# 简历智诊 Agent
+> 当前运行方式和架构以 [平台运行与架构说明](docs/platform.md) 为准。旧匿名 `/api/sessions`、旧诊断页面和旧 WebSocket 协议已退出应用入口，相关代码仅保留作参考与工具复用。
 
-**AI 驱动的简历深度诊断与多轮模拟面试系统**
+## 功能与使用流程
 
-上传简历 → AI 结构化解析 → 智能诊断存疑点 → LangGraph 状态机驱动动态追问 → 量化评估报告
+1. **注册与登录**：普通用户注册，登录后管理自己的简历、面试与聊天记录；管理员通过命令行单独创建。
+2. **简历诊断**：在 `/resumes` 上传 PDF、DOCX 或 TXT，异步解析、评分、生成建议及五道主问题。
+3. **模拟面试**：从 `/interviews/new` 进入面试室，上传或选择简历，准备完成后开始；同一简历可创建多次独立面试。
+4. **多轮问答**：LangGraph 根据回答评估并追问，每道主问题最多两次追问，支持跳过、换个问法和结束面试。
+5. **报告与历史**：查看逐轮回答、真实评分、雷达维度与改进建议；恢复面试和读取报告不会重新调用 AI。
 
-[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-0.2-FF6B6B?logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-38B2AC?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
-[![DeepSeek](https://img.shields.io/badge/LLM-DeepSeek-4765FF)](https://platform.deepseek.com/)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+其他能力：
 
-</div>
+- **AI 聊天**：独立聊天会话、附件与 SSE 响应。
+- **管理员配置**：管理 OpenAI-compatible 供应商及版本化 Agent，已有面试保留创建时冻结的配置。
+- **语音与视觉**：可选讯飞实时转写、长文本 TTS 和独立视觉建议。进入面试室请求摄像头权限并显示本机预览，拒绝或关闭摄像头不阻塞面试；视觉建议不参与答题评分。
+- **访问控制**：HttpOnly Cookie 会话、CSRF 校验、资源归属检查与私有文件访问。
 
----
+默认使用真实模型服务。只有显式设置 `PLATFORM_DEMO_MODE=true` 才启用规则演示，结果带 `demo` 标记；缺少凭据或模型失败不会自动生成成功评分。
 
-## 产品特性
+## 技术与架构
 
-### 智能简历诊断
-- **多格式支持**：PDF / Word / TXT，四重校验（扩展名 + MIME + 魔数 + 大小）
-- **AI 结构化解析**：DeepSeek LLM 提取个人信息、工作经历、项目经历、教育经历、技能
-- **三级存疑点标注**：高 / 中 / 低优先级，自动检测技能夸大、项目描述模糊、时间线异常
-- **用户可修正**：解析结果内联编辑，修正内容反馈给后续面试流程
+| 层 | 技术与职责 |
+| --- | --- |
+| 前端 | React 19、TypeScript、Vite、Tailwind CSS 4、Zustand、React Router 7 |
+| 后端 | Python 3.12、FastAPI、SQLAlchemy 2、Alembic |
+| AI 编排 | LangGraph、OpenAI-compatible API，支持 DeepSeek 等供应商 |
+| 异步任务 | PostgreSQL Outbox、独立 dispatcher、Celery `default` 队列 |
+| 数据 | PostgreSQL 16 保存业务事实；Redis 7 用于协调、通知及 Celery |
+| 检索 | 复用本地知识库与 RAG 工具；Elasticsearch 8 可选 |
+| 部署 | Docker Compose、Nginx |
 
-### LangGraph 多轮模拟面试
-- **状态机驱动**：`question → collect → evaluate → (follow_up | next_point | report)`
-- **动态追问**：根据回答内容自动判断追问深度，单点最多 3 轮
-- **智能工具调用**：Agent 可自主调用 RAG 知识库 / 查看简历字段 / 验证代码片段
-- **防死循环**：单点 3 轮强制切换 + 用户主动跳过 + 连续异常 3 次熔断
-
-### WebSocket 实时对话
-- **流式消息**：LLM 响应分段推送到前端，消除长等待
-- **断线自动重连**：指数退避 + 消息队列缓存，保证会话不中断
-- **Redis 消息缓冲**：重连时自动推送未消费消息
-- **双向协议**：客户端 → `answer | skip | rephrase | start`，服务端 → `question | status | complete | error`
-
-### RAG 三级检索
-- **Elasticsearch 全文检索**：存储技术题库，精确匹配关键词
-- **向量相似度检索**：语义匹配，发现潜在相关问题
-- **关键词降级**：ES 与向量均无结果时，基于标签兜底推荐
-- **内置知识库**：Python / MySQL / Redis / Docker / 系统设计
-
-### 安全与隐私
-- **文件上传安全**：内容嗅探 + 魔数校验 + 大小限制 + 白名单扩展名
-- **敏感信息脱敏**：手机号 / 邮箱 / 身份证号三级脱敏（Prompt 层 + API 响应层 + DB 存储层）
-- **Prompt 防护**：关键词黑名单 + 长度限制 + 注入检测
-- **速率限制**：每分钟请求限流 + 每用户 Token 配额
-
-### 精致 UI 体验
-- **Refined Editorial 设计风格**：暖纸色背景 + 墨黑排版 + 翡翠绿点缀
-- **Fraunces 衬线展示字体** × **Plus Jakarta Sans 正文**：优雅排版层次
-- **错峰入场动画**：页面区块依次动效呈现，提升感知品质
-- **玻璃质感卡片** + **纸质容器**：组件层次分明，视觉焦点清晰
-
----
-
-## 技术架构
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        前端 (React SPA)                      │
-│  pages: HomePage → ParsePage → DiagnosePage → InterviewPage → ReportPage │
-│  stores: sessionStore → diagnoseStore → interviewStore → reportStore      │
-│  hooks: useWebSocket, useVoiceChat                           │
-└─────────────────────────────┬───────────────────────────────┘
-                              │ HTTPS + WebSocket
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Nginx 反向代理 :8000                      │
-│  静态文件 serve + /api, /ws 代理到 backend                   │
-└─────────────────────────────┬───────────────────────────────┘
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                 FastAPI 应用服务 :8000                       │
-│  REST: sessions.py, diagnose.py, interview.py, report.py     │
-│  WebSocket: ws.py (实时对话 + 消息缓存)                        │
-│  MCP Server: server.py (外部 Agent 接入)                      │
-└────┬──────────────┬──────────────┬──────────────┬───────────┘
-     │              │              │              │
-     ▼              ▼              ▼              ▼
-┌─────────┐   ┌─────────┐   ┌──────────────┐   ┌──────────────┐
-│ LangGraph│  │ OpenAI SDK│  │ Elasticsearch │   │  Celery Worker│
-│ 状态机   │   │ DeepSeek  │   │ RAG 检索     │   │ 异步任务    │
-│ nodes/   │   │ 多模型路由 │   │ 技术题库     │   │ 解析/诊断  │
-└─────────┘   └─────────┘   └──────────────┘   └──────┬───────┘
-                                                       │
-┌──────────────────────────────────────────────────────┼───────┐
-│                      数据层                           ▼       │
-│  PostgreSQL 16  (结构化数据)     Redis 7 (缓存 + 消息队列)    │
-└───────────────────────────────────────────────────────────────┘
+```text
+浏览器 → Nginx → FastAPI 鉴权适配器 → 平台应用服务 → LangGraph / 模型网关
+                         │                 │
+                         │                 └→ PostgreSQL：快照、命令、评分、事件、Outbox
+                         └→ Redis：协调与通知                 │
+                                                            ↓
+                                              Outbox dispatcher → Celery → 准备 / 报告 / 媒体任务
 ```
 
-### 技术栈详情
+每条面试命令运行一轮图，等待用户的状态持久化到 PostgreSQL。命令通过请求 ID、版本、租约和 owner token 控制重复提交及并发回写。Redis 丢失不改变已有面试事实；失败重试复用已保存的节点进度，不补造评分。详细恢复语义见 [平台文档](docs/platform.md)。
 
-| 层 | 技术 |
-|----|------|
-| 前端 | React 19 + TypeScript + Vite + Tailwind CSS 4 + Zustand + React Router v7 + React Query |
-| 后端 | FastAPI 0.115 + LangGraph + Celery + SQLAlchemy 2.0 |
-| LLM | DeepSeek API（OpenAI 兼容格式），支持多模型路由（轻量 / 标准 / 推理） |
-| 数据库 | PostgreSQL 16 + Redis 7 + Elasticsearch 8 |
-| 部署 | Docker Compose + Nginx |
-| 安全 | 敏感信息脱敏 + 文件内容校验 + 速率限制 + Prompt 防护 |
-| 监控 | OpenTelemetry（API / 任务 / 对话） |
+## Docker 快速开始
 
----
+在仓库根目录执行，以下命令使用 PowerShell：
 
-## 四步使用流程
+```powershell
+Copy-Item backend/.env.example backend/.env
+# 编辑 backend/.env：设置随机 SECRET_KEY，并配置 LLM_*。
+# 仅体验演示流程时，显式设置 PLATFORM_DEMO_MODE=true。
 
-```
-┌────────────┐     ┌────────────┐     ┌────────────┐     ┌────────────┐
-│  Step 01   │     │  Step 02   │     │  Step 03   │     │  Step 04   │
-│  简历上传  │─→  │  解析确认  │─→  │  诊断报告  │─→  │  模拟面试  │
-└────────────┘     └────────────┘     └────────────┘     └────────────┘
-                                                              ↓
-                                                    ┌────────────┐
-                                                    │  Step 05   │
-                                                    │  评估报告  │
-                                                    └────────────┘
-```
-
-| 步骤 | 页面 | 核心交互 |
-|------|------|----------|
-| 01 · 上传 | [HomePage.tsx](frontend/src/pages/HomePage.tsx) | 拖拽 / 点击上传，实时解析进度 |
-| 02 · 解析 | [ParsePage.tsx](frontend/src/pages/ParsePage.tsx) | 内联编辑 AI 提取的结构化字段 |
-| 03 · 诊断 | [DiagnosePage.tsx](frontend/src/pages/DiagnosePage.tsx) | 查看存疑点，勾选面试范围 |
-| 04 · 面试 | [InterviewPage.tsx](frontend/src/pages/InterviewPage.tsx) | WebSocket 实时对话，多轮追问 |
-| 05 · 报告 | [ReportPage.tsx](frontend/src/pages/ReportPage.tsx) | 可信度评分 + 逐点反馈 + 改进建议 |
-
----
-
-## 快速开始
-
-### 方式一：Docker Compose 一键部署（推荐）
-
-```bash
-# 1. 克隆项目
-git clone https://github.com/Katrina55553/resume-agent.git
-cd resume-agent
-
-# 2. 配置环境变量
-cp backend/.env.example backend/.env
-# 编辑 backend/.env，填入你的 DeepSeek API Key：
-#   LLM_API_KEY=sk-your-deepseek-key-here
-
-# 3. 启动所有服务
 docker compose up -d --build
-
-# 4. 访问应用
-# 浏览器打开 http://localhost:8000
+docker compose exec backend python -m app.platform.cli create-admin --username admin
 ```
 
-> 💡 **LLM 可选**：若不填 `LLM_API_KEY`，系统会切换到规则降级模式，不影响完整流程体验。
+打开 [http://localhost:8000](http://localhost:8000)，注册普通用户或使用初始化的管理员登录。管理员命令会交互式要求输入密码。
 
-### 方式二：本地开发
+Compose 会先由 `migrate` 服务执行 Alembic 迁移，再启动后端与异步进程。正常运行需要 `frontend`、`backend`、`postgres`、`redis`、`celery` 和 `outbox`；只启动 Web 服务无法完成简历准备等异步任务。
 
-```bash
-# ─── 1. 启动数据库与缓存 ────────────────────────────────
-docker compose up -d postgres redis elasticsearch
+可选启用 Elasticsearch：
 
-# ─── 2. 后端服务 ────────────────────────────────────────
+```powershell
+docker compose --profile rag up -d
+```
+
+未启用 Elasticsearch 时保留本地知识库降级检索。
+
+## 本地开发
+
+准备 Python 3.12、兼容 Vite 8 的 Node.js（建议 22.12+）、可连接的 PostgreSQL 16 与 Redis 7。Python 文件校验还依赖系统 `libmagic`，Docker 镜像已安装该依赖。
+
+仓库的 Compose 默认不向宿主机映射 PostgreSQL、Redis 端口。本地运行后端时，请使用本机数据库与 Redis，或先为容器配置端口映射。
+
+### 1. 配置与初始化后端
+
+从仓库根目录执行：
+
+```powershell
+Copy-Item backend/.env.example backend/.env
 cd backend
-pip install -r requirements.txt
-cp .env.example .env
-# 修改 .env：
-#   DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/resume_agent
-#   REDIS_URL=redis://localhost:6379/0
-#   ELASTICSEARCH_URL=http://localhost:9200
-#   LLM_API_KEY=sk-your-key-here
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
 
-# 启动 FastAPI (端口 8000)
+将 `backend/.env` 中连接地址改为本机实际地址，例如：
+
+```dotenv
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/resume_agent
+REDIS_URL=redis://localhost:6379/0
+CELERY_BROKER_URL=redis://localhost:6379/1
+CELERY_RESULT_BACKEND=redis://localhost:6379/2
+CORS_ORIGINS=http://localhost:8000,http://localhost:5173
+```
+
+同时配置随机 `SECRET_KEY` 和 `LLM_*`，或显式启用演示模式。确认数据库已创建后执行：
+
+```powershell
+python -m app.platform.cli migrate
+python -m app.platform.cli create-admin --username admin
 uvicorn app.main:app --reload --port 8000
+```
 
-# 另起终端启动 Celery Worker
-celery -A app.tasks.celery_app worker --loglevel=info
+启动时只验证迁移，不自动建表。
 
-# ─── 3. 前端服务 ────────────────────────────────────────
+### 2. 启动异步进程
+
+再打开两个终端，均进入 `backend` 并激活同一虚拟环境，分别执行：
+
+```powershell
+# 终端二：Celery 消费平台任务，solo 池适用于 Windows 开发
+celery -A app.tasks.celery_app worker --loglevel=info --pool=solo -Q default
+```
+
+```powershell
+# 终端三：发布已提交的 Outbox 任务
+python -m app.platform.worker
+```
+
+### 3. 启动前端
+
+在仓库根目录打开第四个终端：
+
+```powershell
 cd frontend
-npm install
+npm ci
 npm run dev
-# 浏览器打开 http://localhost:5173
 ```
 
-### 常用命令
+打开 [http://localhost:5173](http://localhost:5173)。Vite 将 `/api` 和 `/ws` 代理到本地后端。后端直接访问时提供 [Swagger 文档](http://localhost:8000/docs) 和 [健康检查](http://localhost:8000/health)；Compose 的 Nginx 未代理 `/docs`。
 
-```bash
-# 查看日志
-docker compose logs backend --tail 100      # 后端
-docker compose logs celery --tail 50        # 异步任务
-docker compose logs frontend --tail 50      # 前端 Nginx
+## 主要配置
 
-# 单独重建某服务
-docker compose up -d --build backend        # 仅重建后端
-docker compose up -d --build frontend       # 仅重建前端
+配置模板见 [backend/.env.example](backend/.env.example)，加载逻辑见 [config.py](backend/app/core/config.py)。后端命令需在 `backend` 目录运行，以读取该目录的 `.env`。
 
-# 停止所有服务
-docker compose down
+| 配置 | 用途 |
+| --- | --- |
+| `DATABASE_URL` | PostgreSQL 异步连接；容器用 `postgres`，本地用实际主机地址 |
+| `REDIS_URL` | Redis 协调与通知连接 |
+| `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` | Celery Broker 与结果连接，本地开发也需修改主机地址 |
+| `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | 默认 OpenAI-compatible 模型服务 |
+| `SECRET_KEY` | 会话及供应商密钥保护，部署前替换为随机密钥 |
+| `PLATFORM_DEMO_MODE` | 默认 `false`；显式开启规则演示 |
+| `CORS_ORIGINS` | 实际浏览器来源列表，以逗号分隔；WebSocket 同样检查来源 |
+| `AUTH_COOKIE_SECURE` | HTTPS 部署设为 `true` |
+| `AI_TIMEOUT_SECONDS` / `AI_MAX_CONCURRENCY` / `AI_COMMAND_LEASE_SECONDS` | 模型超时、并发与命令租约 |
+| `XFYUN_APP_ID` / `XFYUN_API_KEY` / `XFYUN_API_SECRET` | 可选讯飞 ASR / TTS，需分别开通产品 |
+| `MAX_UPLOAD_SIZE_MB` / `ALLOWED_EXTENSIONS` | 上传限制；模板为 10 MB、`pdf,docx,txt` |
+
+修改 `SECRET_KEY` 后需要重新保存供应商 API Key，已有面试中冻结的旧凭据也将不可解密。视觉建议需配置独立 vision 供应商及可选 Agent，配置在面试创建时冻结。
+
+## 接口入口
+
+| 入口 | 用途 |
+| --- | --- |
+| `/api/auth` | 注册、登录、当前用户、退出 |
+| `/api/resumes` | 简历上传、列表、准备结果、私有文件与失败重试 |
+| `/api/interviews` | 独立面试、快照、命令、事件、报告及报告重试 |
+| `/ws/interviews/{id}?after=N` | 面试事件补取与命令提交 |
+| `/api/chats` | 聊天会话、附件与 SSE 消息 |
+| `/api/admin/providers` / `/api/admin/agents` | 管理员供应商及版本化角色管理 |
+| `/api/media` / `/ws/asr/{interview_id}` | 媒体能力、语音合成与实时转写 |
+| `/api/interviews/{id}/vision` | 独立视觉建议 |
+| `/health` | 后端健康检查 |
+
+修改请求需携带 `X-CSRF-Token`，值来自 `ra_csrf` Cookie。面试命令支持 `start`、`answer`、`skip`、`rephrase`、`end`，例如：
+
+```json
+{"request_id":"unique-request-id","type":"answer","expected_question_id":"question-id","version":1,"content":"我的回答"}
 ```
 
----
-
-## API 端点
-
-### REST API
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `POST` | `/api/sessions` | 上传简历（multipart/form-data） |
-| `GET` | `/api/sessions/{id}/status` | 获取解析进度（轮询） |
-| `GET` | `/api/sessions/{id}/parse` | 获取 AI 解析结果 |
-| `PUT` | `/api/sessions/{id}/parse` | 用户修正解析结果 |
-| `POST` | `/api/sessions/{id}/diagnose` | 触发诊断（异步任务） |
-| `GET` | `/api/sessions/{id}/diagnose` | 获取诊断报告（存疑点列表） |
-| `POST` | `/api/sessions/{id}/interview/start` | 开始面试（REST 模式） |
-| `POST` | `/api/sessions/{id}/interview/respond` | 提交回答（REST 模式） |
-| `POST` | `/api/sessions/{id}/interview/skip` | 跳过当前问题 |
-| `POST` | `/api/sessions/{id}/interview/rephrase` | 换个问法 |
-| `GET` | `/api/sessions/{id}/interview/resume` | 恢复面试（消息列表 + 当前状态） |
-| `GET` | `/api/sessions/{id}/report` | 获取量化评估报告 |
-| `GET` | `/api/health` | 健康检查 |
-| `GET` | `/docs` | Swagger 文档（FastAPI 自动生成） |
-| `GET` | `/openapi.json` | OpenAPI 规范 JSON |
-
-### WebSocket 协议
-
-- **连接**：`ws://{host}/ws/interview/{session_id}`
-- **客户端消息**（JSON）：
-  ```jsonc
-  // 提交回答
-  { "type": "answer", "content": "我在该项目中负责..." }
-
-  // 跳过问题
-  { "type": "skip" }
-
-  // 换个问法
-  { "type": "rephrase" }
-
-  // 开始面试（可选，通常 REST 先调用）
-  { "type": "start" }
-  ```
-- **服务端消息**（JSON）：
-  ```jsonc
-  // 面试官问题（流式 chunk）
-  { "type": "chunk", "content": "请详细说说..." }
-  { "type": "question", "content": "完整的问题内容...", "point_index": 2 }
-
-  // 状态更新
-  { "type": "status", "message": "正在调用知识库检索..." }
-
-  // 面试完成
-  { "type": "complete", "redirect_to": "/session/{id}/report" }
-
-  // 错误
-  { "type": "error", "code": 2001, "message": "LLM 超时" }
-  ```
-
----
+MCP 入口为 `python -m app.mcp.server`，通过私有环境变量 `RESUME_AGENT_MCP_TOKEN` 绑定有效登录会话，使用相同的权限与应用服务。当前鉴权与接入约束见 [平台文档](docs/platform.md)；[旧 MCP 文档](MCP_README.md) 中的工具清单与流程仅供历史参考。
 
 ## 项目结构
 
-```
-resume-agent/
-├── frontend/                              # React SPA
-│   ├── src/
-│   │   ├── pages/                         # 5 个页面组件
-│   │   │   ├── HomePage.tsx              # 首页（上传）
-│   │   │   ├── ParsePage.tsx             # 解析确认
-│   │   │   ├── DiagnosePage.tsx          # 诊断报告
-│   │   │   ├── InterviewPage.tsx         # 模拟面试（WebSocket）
-│   │   │   └── ReportPage.tsx            # 评估报告
-│   │   ├── components/Upload/            # FileDropzone, UploadProgress
-│   │   ├── stores/                        # Zustand 状态管理
-│   │   │   ├── sessionStore.ts           # 上传 / 解析
-│   │   │   ├── diagnoseStore.ts          # 诊断 + 存疑点
-│   │   │   ├── interviewStore.ts         # WebSocket 面试
-│   │   │   └── reportStore.ts            # 评估报告
-│   │   ├── hooks/                         # useWebSocket, useVoiceChat
-│   │   ├── utils/api.ts                   # Axios 封装
-│   │   └── index.css                      # 全局设计系统 + Tailwind
-│   ├── Dockerfile                          # 多阶段构建 + Nginx
-│   └── nginx.conf                          # 反代配置
-│
-├── backend/                               # FastAPI 服务
+```text
+ResumeAgent/
+├── backend/
 │   ├── app/
-│   │   ├── api/                            # REST + WebSocket
-│   │   │   ├── sessions.py                # 上传 / 解析
-│   │   │   ├── diagnose.py                # 诊断
-│   │   │   ├── interview.py               # REST 面试
-│   │   │   ├── report.py                  # 评估报告
-│   │   │   └── ws.py                      # WebSocket 实时对话
-│   │   ├── core/                           # 核心模块
-│   │   │   ├── config.py                  # pydantic-settings 配置
-│   │   │   ├── database.py                # SQLAlchemy + 连接池
-│   │   │   ├── redis.py                   # Redis 客户端
-│   │   │   ├── llm.py                     # 统一 LLM 调用 + 工具解析
-│   │   │   ├── rag.py                     # ES + 向量混合检索
-│   │   │   ├── tools.py                   # Agent 可调用工具
-│   │   │   ├── es.py                      # ES 初始化
-│   │   │   ├── errors.py                  # 统一错误码
-│   │   │   └── msg_cache.py               # WebSocket 消息缓存
-│   │   ├── agent/                          # LangGraph 状态机
-│   │   │   ├── graph.py                   # 图定义 + 入口
-│   │   │   ├── state.py                   # 状态定义
-│   │   │   ├── rules.py                   # 规则（追问上限等）
-│   │   │   └── nodes/                      # 节点实现
-│   │   │       ├── question.py            # 生成问题
-│   │   │       ├── collect.py             # 收集回答
-│   │   │       ├── evaluate.py            # 评估 + 分支决策
-│   │   │       └── report.py              # 生成报告
-│   │   ├── tasks/                          # Celery 异步任务
-│   │   │   ├── celery_app.py              # Celery 应用
-│   │   │   ├── parse_task.py              # 简历解析
-│   │   │   ├── diagnose_task.py           # 存疑点诊断
-│   │   │   └── report_task.py             # 报告生成
-│   │   ├── models/                         # ORM + Pydantic 模型
-│   │   ├── middleware/                     # auth, rate_limit
-│   │   ├── mcp/server.py                   # MCP 协议服务
-│   │   ├── utils/security/                 # 安全工具
-│   │   │   ├── file_upload.py             # 文件内容嗅探 + 魔数校验
-│   │   │   ├── masking.py                 # 敏感信息脱敏（三级）
-│   │   │   └── prompt_guard.py            # Prompt 防护
-│   │   └── main.py                        # FastAPI 入口
-│   ├── knowledge/                          # RAG 知识库 JSON
-│   │   ├── python.json
-│   │   ├── mysql.json
-│   │   ├── redis.json
-│   │   ├── docker.json
-│   │   └── system_design.json
-│   ├── tests/                              # pytest 单元测试
-│   ├── requirements.txt                     # Python 依赖
-│   └── Dockerfile                           # FastAPI 容器
-│
-
-├── docker-compose.yml                       # 6 服务编排
-├── AGENTS.md                                # Agent 开发规范（给 AI 协作者）
-└── README.md
+│   │   ├── platform/          # 当前业务：认证、简历、面试、聊天、管理、媒体
+│   │   │   ├── service.py     # 统一面试命令服务
+│   │   │   ├── graph.py       # 每条命令运行一轮 LangGraph
+│   │   │   ├── worker.py      # Outbox dispatcher 与平台 Celery 任务
+│   │   │   └── cli.py         # 迁移、管理员初始化、开发重置
+│   │   ├── core/              # 配置、数据库、LLM、RAG 与工具
+│   │   ├── mcp/               # 鉴权 MCP 接入
+│   │   └── main.py            # 当前路由注册与生命周期
+│   ├── migrations/            # 平台数据库版本迁移
+│   ├── knowledge/             # 本地题库
+│   └── tests/
+├── frontend/
+│   ├── src/platform/          # 当前平台页面、状态与样式
+│   ├── src/App.tsx            # 当前应用路由
+│   ├── dist/                  # 前端构建产物，按仓库约定提交
+│   └── nginx.conf             # 静态资源、API 与 WebSocket 代理
+├── docs/
+│   ├── platform.md            # 运行、架构、恢复语义与验收说明
+│   └── verification.md        # 部署与测试记录
+└── docker-compose.yml
 ```
 
----
+旧 `frontend/src/pages/`、stores、`backend/app/api/` 与旧 Agent 代码仍保留；新增平台业务应在 `platform/` 下维护。
 
-## 核心设计
+## 检查与测试
 
-### LangGraph 状态机
+后端，在 `backend` 目录执行（Ruff 需另行安装）：
 
-```
-                          ┌──────────────┐
-                          │   question   │  生成当前存疑点问题
-                          └──────┬───────┘
-                                 │
-                          ┌──────▼───────┐
-                          │   collect    │  接收并格式化用户回答
-                          └──────┬───────┘
-                                 │
-                          ┌──────▼───────┐
-                          │  evaluate    │  评估回答 + 分支决策
-                          └──┬───┬───┬───┘
-                             │   │   │
-              ┌──────────────┘   │   └──────────────┐
-              │                  │                  │
-     ┌────────▼────────┐  ┌──────▼────────┐  ┌─────▼───────┐
-     │   follow_up     │  │  next_point    │  │   report    │
-     │  继续追问同一点  │  │  切换下一存疑点 │  │  生成评估报告 │
-     └────────┬────────┘  └────────────────┘  └─────────────┘
-              │
-              └──────────────────────→ 回到 question
+```powershell
+python -m pip install ruff
+python -m ruff check .
+python -m pytest tests -q -p no:cacheprovider
 ```
 
-### 追问防死循环策略
+前端，在 `frontend` 目录执行：
 
-1. **单点上限**：每个存疑点最多追问 3 轮，超限强制切换到下一点
-2. **用户主动跳过**：前端提供跳过按钮，Agent 记录跳过状态
-3. **异常熔断**：连续异常 3 次，触发安全熔断，结束当前点面试
+```powershell
+npm run lint
+npm test
+npm run build
+```
 
-### 多模型路由
+真实数据库测试需指向隔离测试环境：
 
-| 模型 | 适用场景 | 配置项 |
-|------|----------|--------|
-| `deepseek-chat` | 常规对话、生成问题 | `LLM_MODEL` |
-| `deepseek-chat` (light) | 文本分类、快速抽取 | `LLM_MODEL_LIGHT` |
-| `deepseek-reasoner` | 代码验证、深度推理 | `LLM_MODEL_HEAVY` |
-| `deepseek-embedding` | 向量检索 | `LLM_MODEL_EMBEDDING` |
+```powershell
+# 在 backend 目录执行，勿使用个人数据或生产数据库
+$env:PLATFORM_TEST_DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5432/resume_agent_test"
+$env:PLATFORM_TEST_REDIS_URL="redis://localhost:6379/15"
+python -m pytest tests/test_platform_service.py tests/test_platform_media.py -q -p no:cacheprovider
+```
 
-### WebSocket 消息缓存与恢复
+模型替身测试验证契约与故障行为。真实 LLM、ASR、TTS 和视觉能力需分别配置凭据并实联验收，详见 [验证记录](docs/verification.md)。
 
-- **消息缓存**：Redis Stream 结构存储会话消息，TTL 24 小时
-- **重连机制**：前端指数退避（500ms → 1s → 2s → 4s → 最多 5 次）
-- **恢复流程**：重连后前端发送 `GET /api/sessions/{id}/interview/resume` 获取历史消息 + 当前状态
+## 常用运维命令
 
----
+在仓库根目录执行：
 
-## 开发指南
+```powershell
+docker compose ps
+docker compose logs backend celery outbox --tail 100
+docker compose up -d --build backend celery outbox
+docker compose up -d --build frontend
+docker compose down
+```
 
-### 添加新的 RAG 知识类目
+仅在 `ENVIRONMENT=development` 下，可在 `backend` 目录显式重置平台数据：
 
-1. 在 `backend/knowledge/` 新建 JSON 文件，格式：
-   ```json
-   {
-     "category": "your-topic",
-     "questions": [
-       { "id": "q1", "question": "...", "answer": "...", "tags": ["t1"] }
-     ]
-   }
-   ```
-2. 重启后端，ES 索引会自动初始化。
+```powershell
+python -m app.platform.cli reset-dev --confirm RESET-PLATFORM
+```
 
-### 添加新的 Agent 工具
-
-在 `backend/app/core/tools.py` 定义函数，然后在 `backend/app/core/llm.py` 的 `AVAILABLE_TOOLS` 中注册。
-
-### 扩展 LLM 到其他提供商
-
-修改 `backend/.env` 中的 `LLM_BASE_URL` 为任意 OpenAI 兼容端点：
-- **Claude Anthropic**：`https://api.anthropic.com/v1`（需适配兼容层）
-- **Ollama**：`http://localhost:11434/v1`
-- **SiliconFlow**：`https://api.siliconflow.cn/v1`
-
-### 贡献指南
-
-1. Fork 本仓库
-2. 创建特性分支：`git checkout -b feat/amazing-feature`
-3. 提交改动：`git commit -m 'feat: 添加某某功能'`
-4. 推送分支：`git push origin feat/amazing-feature`
-5. 提交 Pull Request
-
-> 请确保提交前通过 `lint` 和测试：
-> ```bash
-> cd frontend && npm run lint && cd ..
-> cd backend && ruff check . && python -m pytest -q && cd ..
-> ```
-
----
-
-## 环境变量配置
-
-`backend/.env` 主要配置项：
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@postgres:5432/resume_agent` | PostgreSQL 连接字符串 |
-| `REDIS_URL` | `redis://redis:6379/0` | Redis 连接 |
-| `ELASTICSEARCH_URL` | `http://elasticsearch:9200` | ES 连接 |
-| `LLM_BASE_URL` | `https://api.deepseek.com` | LLM API 端点（OpenAI 兼容） |
-| `LLM_API_KEY` | *(空)* | API Key（空则规则降级） |
-| `LLM_MODEL` | `deepseek-chat` | 默认模型名 |
-| `LLM_MODEL_HEAVY` | `deepseek-reasoner` | 推理任务模型 |
-| `SECRET_KEY` | `change-me-in-production` | Token 签名密钥（生产必须修改） |
-| `CORS_ORIGINS` | `http://localhost:5173,http://localhost:8000` | 允许的来源 |
-| `MAX_UPLOAD_SIZE_MB` | `10` | 最大上传文件大小（1–100） |
-| `RATE_LIMIT_PER_MINUTE` | `60` | 每分钟请求限流 |
-| `ENVIRONMENT` | `development` | `development | staging | production` |
-
-详见 [backend/.env.example](backend/.env.example)。
-
----
+该命令删除并重建 `platform_` 表，保留旧版表及原始文件；执行后需重新创建管理员。
 
 ## 更多文档
 
-- [系统设计教程（GitHub Wiki）](https://github.com/Katrina55553/Resume-Agent/wiki)
-- [Agent 开发规范（AGENTS.md）](AGENTS.md)
-- [MCP Server 文档（MCP_README.md）](MCP_README.md)
-
----
-
-## 许可证
-
-本项目采用 [MIT License](LICENSE) 开源，欢迎商业使用与二次开发。
-
----
-
-<div align="center">
-
-Made with ❤️ by [Katrina55553](https://github.com/Katrina55553)
-
-</div>
+- [平台运行与架构](docs/platform.md)
+- [部署与测试记录](docs/verification.md)
+- [旧 MCP 文档（历史参考）](MCP_README.md)
+- [Agent 开发规范](AGENTS.md)
