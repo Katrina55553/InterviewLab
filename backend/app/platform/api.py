@@ -23,6 +23,7 @@ from sqlalchemy import select
 
 from app.core.database import async_session_maker
 from app.platform.auth import current_user, websocket_user
+from app.platform.contracts import PlatformError, error_payload, traced
 from app.platform.models import Agent, Interview, Resume, User, new_id
 from app.platform.runtime import freeze_configs
 from app.platform.service import (
@@ -204,14 +205,20 @@ async def interview_socket(websocket: WebSocket, interview_id: str, after: int =
                     await send({"type": "pong"})
                     continue
                 body = InterviewCommand.model_validate(data)
-                result = await execute_command(user.id, interview_id, body.model_dump())
-                await send({"type": "command_result", "request_id": body.request_id, "snapshot": result})
+                with traced(new=True, request_id=body.request_id, connection_id=getattr(websocket.state, "trace_id", new_id())) as context:
+                    try:
+                        result = await execute_command(user.id, interview_id, body.model_dump())
+                    except (HTTPException, PlatformError) as exc:
+                        await send({"type": "error", "status": getattr(exc, "status", getattr(exc, "status_code", 503)),
+                                    **error_payload(exc)})
+                        continue
+                await send({"type": "command_result", "request_id": body.request_id, "trace_id": context["trace_id"], "snapshot": result})
             except ValidationError:
-                await send({"type": "error", "message": "命令格式无效"})
+                await send({"type": "error", **error_payload(HTTPException(422, "命令格式无效"))})
             except (ValueError, json.JSONDecodeError):
-                await send({"type": "error", "message": "消息必须是 JSON 对象"})
+                await send({"type": "error", **error_payload(HTTPException(422, "消息必须是 JSON 对象"))})
             except HTTPException as exc:
-                await send({"type": "error", "status": exc.status_code, "message": str(exc.detail)})
+                await send({"type": "error", "status": exc.status_code, **error_payload(exc)})
 
     tasks = [asyncio.create_task(push()), asyncio.create_task(receive())]
     try:

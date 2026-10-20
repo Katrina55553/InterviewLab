@@ -1,0 +1,99 @@
+rule_files: [alerts.yml]
+evaluation_interval: 15s
+tests:
+  - interval: 15s
+    input_series:
+      - series: platform_database_up
+        values: '0x20'
+      - series: platform_ai_attempts_total{scene="chat",outcome="unknown"}
+        values: '0+1x20'
+      - series: platform_outbox_oldest_seconds
+        values: '200x20'
+      - series: platform_healthy_instances{role="worker"}
+        values: '0x20'
+      - series: platform_rejected_total{scene="chat",workload="interactive"}
+        values: '0+3x20'
+      - series: platform_ai_timeout_total{scene="chat",workload="interactive"}
+        values: '0+1x20'
+      - series: platform_circuits{scene="chat",state="open"}
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: PlatformDatabaseUnavailable
+        exp_alerts:
+          - exp_labels: {}
+            exp_annotations: {summary: Platform database or exporter unavailable}
+      - eval_time: 3m
+        alertname: PlatformUnknownResults
+        exp_alerts:
+          - exp_labels: {}
+            exp_annotations: {summary: 'Unknown AI outcomes require investigation; do not automatically retry'}
+      - eval_time: 3m
+        alertname: PlatformProviderFailures
+        exp_alerts:
+          - exp_labels: {}
+            exp_annotations: {summary: AI failures exceed the initial investigation threshold}
+      - eval_time: 3m
+        alertname: PlatformOutboxBlocked
+        exp_alerts:
+          - exp_labels: {}
+            exp_annotations: {summary: Durable jobs are waiting for delivery or consumption}
+      - eval_time: 3m
+        alertname: PlatformWorkerMissing
+        exp_alerts:
+          - exp_labels: {role: worker}
+            exp_annotations: {summary: A required platform process has no recent heartbeat}
+      - eval_time: 3m
+        alertname: PlatformAdmissionOverloaded
+        exp_alerts:
+          - exp_labels: {}
+            exp_annotations: {summary: AI admission is rejecting excess load}
+      - eval_time: 3m
+        alertname: PlatformProviderTimeouts
+        exp_alerts:
+          - exp_labels: {}
+            exp_annotations: {summary: Provider calls are exceeding their total deadline}
+      - eval_time: 3m
+        alertname: PlatformCircuitOpen
+        exp_alerts:
+          - exp_labels: {}
+            exp_annotations: {summary: 'A process provider circuit is open; review correlated failure records'}
+  - interval: 15s
+    input_series:
+      - series: platform_flights{status="unknown"}
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: PlatformUnknownResults
+        exp_alerts:
+          - exp_labels: {}
+            exp_annotations: {summary: 'Unknown AI outcomes require investigation; do not automatically retry'}
+  - interval: 15s
+    input_series:
+      - series: platform_database_up
+        values: '1x20'
+      - series: platform_ai_attempts_total{scene="chat",outcome="completed"}
+        values: '0+1x20'
+      - series: platform_ai_attempts_total{scene="chat",outcome="unknown"}
+        values: '0x20'
+      - series: platform_flights{status="unknown"}
+        values: '0x20'
+      - series: platform_outbox_oldest_seconds
+        values: '0x20'
+      - series: platform_healthy_instances{role="worker"}
+        values: '1x20'
+      - series: platform_rejected_total{scene="chat",workload="interactive"}
+        values: '0x20'
+      - series: platform_ai_timeout_total{scene="chat",workload="interactive"}
+        values: '0x20'
+      - series: platform_circuits{scene="chat",state="closed"}
+        values: '1x20'
+    alert_rule_test:
+      - {eval_time: 3m, alertname: PlatformDatabaseUnavailable, exp_alerts: []}
+      - {eval_time: 3m, alertname: PlatformUnknownResults, exp_alerts: []}
+      - {eval_time: 3m, alertname: PlatformProviderFailures, exp_alerts: []}
+      - {eval_time: 3m, alertname: PlatformOutboxBlocked, exp_alerts: []}
+      - {eval_time: 3m, alertname: PlatformWorkerMissing, exp_alerts: []}
+      - {eval_time: 3m, alertname: PlatformAdmissionOverloaded, exp_alerts: []}
+      - {eval_time: 3m, alertname: PlatformProviderTimeouts, exp_alerts: []}
+      - {eval_time: 3m, alertname: PlatformCircuitOpen, exp_alerts: []}

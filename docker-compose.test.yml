@@ -1,0 +1,132 @@
+name: resumeagent-engineering-test
+
+x-backend: &backend
+  mem_limit: 1g
+  image: ${TEST_BACKEND_IMAGE:-resumeagent-engineering-backend:local}
+  build: ./backend
+  environment: &test-env
+    DATABASE_URL: postgresql+asyncpg://postgres:test-only@postgres:5432/resume_agent_test
+    REDIS_URL: redis://redis:6379/0
+    CELERY_BROKER_URL: redis://redis:6379/1
+    CELERY_RESULT_BACKEND: redis://redis:6379/2
+    SECRET_KEY: isolated-engineering-test-secret-key-2026
+    LLM_API_KEY: test-fixture-only
+    LLM_BASE_URL: http://provider:8000/v1
+    LLM_MODEL: test
+    PLATFORM_DEMO_MODE: ${TEST_DEMO_MODE:-false}
+    AI_COMMAND_LEASE_SECONDS: 10
+    AI_TIMEOUT_SECONDS: 20
+    AI_UNKNOWN_LIMIT: 100
+    AI_PROVIDER_CONCURRENCY: 2
+    AI_INTERACTIVE_RESERVED_PERMITS: 1
+    AI_CIRCUIT_OPEN_SECONDS: 3
+    CORS_ORIGINS: http://127.0.0.1:18080,http://localhost:18080,http://frontend
+  volumes: [test-uploads:/app/uploads]
+  depends_on:
+    migrate: {condition: service_completed_successfully}
+  healthcheck:
+    test: [CMD, python, -m, app.platform.operations.health]
+    interval: 5s
+    timeout: 15s
+    retries: 12
+
+services:
+  alerts:
+    image: prom/prometheus:v3.2.1
+    profiles: [monitoring]
+    volumes: [./operations:/rules:ro]
+    entrypoint: promtool
+    command: test rules /rules/alerts.test.yml
+  postgres:
+    mem_limit: 1g
+    image: postgres:16-alpine
+    environment: {POSTGRES_DB: resume_agent_test, POSTGRES_USER: postgres, POSTGRES_PASSWORD: test-only}
+    ports: ["127.0.0.1:55433:5432"]
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres"]
+      interval: 2s
+      retries: 20
+  redis:
+    mem_limit: 512m
+    image: redis:7-alpine
+    ports: ["127.0.0.1:56380:6379"]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 2s
+      retries: 20
+  provider:
+    <<: *backend
+    depends_on: {}
+    volumes: []
+    command: uvicorn tests.fake_provider:app --host 0.0.0.0 --port 8000
+    ports: ["127.0.0.1:18082:8000"]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/control')"]
+      interval: 2s
+      retries: 20
+  migrate:
+    <<: *backend
+    command: python -m app.platform.cli migrate
+    healthcheck: {disable: true}
+    depends_on:
+      postgres: {condition: service_healthy}
+  backend:
+    <<: *backend
+    environment:
+      <<: *test-env
+      PLATFORM_FAULT_POINT: ${FAULT_POINT:-disabled}
+      PLATFORM_FAULT_DIR: /faults
+    volumes:
+      - test-uploads:/app/uploads
+      - ./backend/.test-work/faults:/faults
+    ports: ["127.0.0.1:18083:8000"]
+  backend2:
+    <<: *backend
+    ports: ["127.0.0.1:18081:8000"]
+  dispatcher:
+    <<: *backend
+    mem_limit: 256m
+    environment:
+      <<: *test-env
+      SERVICE_ROLE: dispatcher
+      PLATFORM_FAULT_POINT: ${DISPATCHER_FAULT_POINT:-disabled}
+      PLATFORM_FAULT_DIR: /faults
+    volumes:
+      - test-uploads:/app/uploads
+      - ./backend/.test-work/faults:/faults
+    command: python -m app.platform.worker
+  inspector:
+    <<: *backend
+    mem_limit: 256m
+    environment: {<<: *test-env, SERVICE_ROLE: inspector}
+    command: python -m app.platform.operations.recovery
+  celery:
+    <<: *backend
+    mem_limit: 2g
+    environment:
+      <<: *test-env
+      SERVICE_ROLE: worker
+      PLATFORM_FAULT_POINT: ${WORKER_FAULT_POINT:-disabled}
+      PLATFORM_FAULT_DIR: /faults
+    volumes:
+      - test-uploads:/app/uploads
+      - ./backend/.test-work/faults:/faults
+    command: celery -A app.tasks.celery_app worker --loglevel=warning --concurrency=2 -Q prepare,report,default
+    healthcheck:
+      test: [CMD, python, -m, app.platform.operations.health]
+      interval: 5s
+      retries: 20
+  frontend:
+    mem_limit: 128m
+    image: ${TEST_FRONTEND_IMAGE:-resumeagent-engineering-frontend:local}
+    build: ./frontend
+    depends_on: {backend: {condition: service_healthy}}
+    ports: ["127.0.0.1:18080:80"]
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1/"]
+      interval: 5s
+      retries: 20
+
+volumes:
+  test-uploads:

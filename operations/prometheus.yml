@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 15s
+rule_files: [/etc/prometheus/alerts.yml]
+scrape_configs:
+  # One database-derived exporter counts all prefork children and backend replicas.
+  - job_name: platform
+    static_configs:
+      - targets: [metrics:9090]

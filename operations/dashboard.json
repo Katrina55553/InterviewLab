@@ -1,0 +1,122 @@
+{
+  "title": "ResumeAgent operations",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "AI attempts by outcome",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by(outcome) (rate(platform_ai_attempts_total[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "AI request P95",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(platform_ai_duration_seconds_bucket[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Durable job backlog",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "platform_jobs{status=\"queued\"}"
+        },
+        {
+          "expr": "platform_outbox_oldest_seconds"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Capacity and component health",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "platform_active_permits"
+        },
+        {
+          "expr": "platform_healthy_instances"
+        },
+        {
+          "expr": "platform_database_up"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Job queue and execution P95",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by(le, workload) (rate(platform_job_wait_seconds_bucket[5m])))"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by(le, workload) (rate(platform_job_execution_seconds_bucket[5m])))"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Admission, circuit and flight coordination",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "platform_circuits"
+        },
+        {
+          "expr": "sum(rate(platform_rejected_total[5m]))"
+        },
+        {
+          "expr": "sum(rate(platform_flight_hit_total[5m]))"
+        }
+      ]
+    }
+  ]
+}

@@ -151,6 +151,15 @@ class Outbox(Base):
     owner_token = Column(String(128), nullable=True)
     lease_until = Column(DateTime, nullable=True)
     error = Column(Text, nullable=True)
+    trace_id = Column(String(32), nullable=True)
+    delivery_owner = Column(String(36), nullable=True)
+    delivery_lease_until = Column(DateTime, nullable=True)
+    delivery_attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    delivery_id = Column(String(36), nullable=True)
+    published_at = Column(DateTime, nullable=True)
+    next_delivery_at = Column(DateTime, nullable=True, index=True)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=utcnow)
 
 
@@ -237,4 +246,82 @@ class AiCall(Base):
     input_tokens = Column(Integer, nullable=True)
     output_tokens = Column(Integer, nullable=True)
     error_code = Column(String(64), nullable=True)
+    trace_id = Column(String(32), nullable=True)
+    flight_id = Column(String(64), nullable=True, index=True)
+    credential_scope = Column(String(64), nullable=True, index=True)
+    workload = Column(String(24), nullable=True)
+    reserved_tokens = Column(Integer, nullable=False, default=0, server_default="0")
+    outcome = Column(String(16), nullable=True)
+    lease_until = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=utcnow)
+
+
+class AiPermit(Base):
+    __tablename__ = "platform_ai_permits"
+
+    id = Column(String(36), primary_key=True, default=new_id)
+    credential_scope = Column(String(64), nullable=False, index=True)
+    workload = Column(String(24), nullable=False)
+    owner_token = Column(String(36), nullable=False)
+    lease_until = Column(DateTime, nullable=False, index=True)
+
+
+class AiFlight(Base):
+    __tablename__ = "platform_ai_flights"
+
+    id = Column(String(64), primary_key=True)
+    operation_id = Column(String(36), nullable=False, index=True)
+    generation = Column(Integer, nullable=False, default=0)
+    previous_id = Column(String(64), nullable=True)
+    status = Column(String(24), nullable=False)
+    owner_token = Column(String(36), nullable=True)
+    lease_until = Column(DateTime, nullable=True, index=True)
+    result = Column(json_type, nullable=True)
+    error = Column(json_type, nullable=True)
+    trace_id = Column(String(32), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+
+
+class ConfigRevision(Base):
+    __tablename__ = "platform_config_revisions"
+    __table_args__ = (UniqueConstraint("kind", "entity_id", "version", name="uq_platform_revision"),)
+
+    id = Column(String(36), primary_key=True, default=new_id)
+    kind = Column(String(16), nullable=False)
+    entity_id = Column(String(36), nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    actor_id = Column(String(36), nullable=True)
+    config = Column(json_type, nullable=False)
+    deleted = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+
+
+class InstanceHeartbeat(Base):
+    __tablename__ = "platform_instance_heartbeats"
+
+    id = Column(String(128), primary_key=True)
+    role = Column(String(24), nullable=False)
+    last_seen = Column(DateTime, nullable=False)
+    last_progress = Column(DateTime, nullable=True)
+    ready = Column(Boolean, nullable=False, default=False)
+
+
+class OperationCounter(Base):
+    __tablename__ = "platform_operation_counters"
+
+    id = Column(String(100), primary_key=True)
+    name = Column(String(32), nullable=False)
+    scene = Column(String(24), nullable=False)
+    workload = Column(String(24), nullable=False)
+    value = Column(Integer, nullable=False, default=0)
+    duration_ms = Column(Integer, nullable=False, default=0)
+
+
+class CircuitObservation(Base):
+    __tablename__ = "platform_circuit_observations"
+
+    id = Column(String(200), primary_key=True)
+    scene = Column(String(24), nullable=False)
+    state = Column(String(16), nullable=False)
+    valid_until = Column(DateTime, nullable=False)
+    last_seen = Column(DateTime, nullable=False)

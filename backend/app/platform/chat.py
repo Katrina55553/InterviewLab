@@ -17,9 +17,11 @@ from sqlalchemy import delete, select, update
 
 from app.core.config import settings
 from app.core.database import async_session_maker
-from app.core.documents import extract_text, mask_raw_text
+from app.core.documents import mask_raw_text
 from app.platform.auth import check_csrf, current_user
+from app.platform.contracts import PlatformError, error_payload
 from app.platform.models import Agent, Chat, ChatMessage, Resume, User, new_id, utcnow
+from app.platform.operations.parsing import parse_document
 from app.platform.runtime import AIError, call_scope, freeze_configs, stream_chat
 from app.utils.security.file_upload import validate_upload_file
 
@@ -282,11 +284,15 @@ async def _reply_stream(claim: StreamClaim):
             yield _sse("delta", {"content": delta})
         else:
             config = (await freeze_configs(claim.agent_id))["chat"]
+            async def fence():
+                if lost.is_set() or not await _checkpoint(claim, state["content"]):
+                    raise PlatformError("STATE_CONFLICT", "当前回复执行权已失效", status=409, outcome="unknown")
+
             source = stream_chat(config, claim.messages)
             while True:
                 # Keep the scope within each generator advancement: no context
                 # token spans an SSE yield or leaks into another request task.
-                with call_scope(claim.user_id):
+                with call_scope(claim.user_id, fence=fence):
                     try:
                         delta = await anext(source)
                     except StopAsyncIteration:
@@ -309,8 +315,8 @@ async def _reply_stream(claim: StreamClaim):
         raise
     except Exception as exc:
         finalized = await _finish_safely(claim, state["content"], "failed")
-        message = str(exc) if isinstance(exc, AIError) else "对话服务暂时不可用，已保留接收到的内容"
-        yield _sse("error", {"message": message})
+        error = exc if isinstance(exc, PlatformError) else AIError("对话服务暂时不可用，已保留接收到的内容", unknown=True)
+        yield _sse("error", error_payload(error))
     finally:
         renewer.cancel()
         with anyio.CancelScope(shield=True):
@@ -348,7 +354,7 @@ async def attach_file(chat_id: str, file: UploadFile = File(...), user: User = D
         with tempfile.NamedTemporaryFile(dir=temporary_root, suffix=suffix, delete=False) as temporary:
             path = Path(temporary.name)
         await asyncio.to_thread(path.write_bytes, await file.read())
-        extraction = asyncio.create_task(asyncio.to_thread(extract_text, str(path)))
+        extraction = asyncio.create_task(parse_document(str(path)))
         try:
             extracted = await asyncio.shield(extraction)
         except asyncio.CancelledError:
@@ -356,6 +362,8 @@ async def attach_file(chat_id: str, file: UploadFile = File(...), user: User = D
             # that worker to release it before deleting the private temporary file.
             with anyio.CancelScope(shield=True), contextlib.suppress(Exception):
                 await extraction
+            raise
+        except PlatformError:
             raise
         except Exception:
             raise HTTPException(422, "附件文本提取失败，请检查文件是否损坏或加密") from None

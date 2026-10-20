@@ -80,7 +80,7 @@ function InterviewSession({ id }: { id: string }) {
       autoStarted.current = true;
       // Consume the entry action before sending: refreshing is a recovery read.
       navigate(location.pathname, { replace: true, state: null });
-      if (!busy && !command && !data.pending_command && data.status === 'draft' && !data.messages.length) void submit('start');
+      if (!busy && !command && !data.pending_command && data.status === 'ready' && !data.messages.length) void submit('start');
     }, 0);
     return () => window.clearTimeout(timer);
   }, [location.state, location.pathname, navigate, data, busy, command, submit]);

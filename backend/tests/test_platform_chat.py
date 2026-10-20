@@ -138,7 +138,10 @@ async def test_failed_stream_keeps_partial_and_requires_explicit_new_request(cha
     monkeypatch.setattr(chat, "stream_chat", failing)
     body = {"content": "hello", "request_id": "request-0002"}
     response = await client.post(f"/api/chats/{record['id']}/messages", json=body, headers=csrf(client))
-    assert events(response) == [("delta", {"content": "已生成的内容"}), ("error", {"message": "模型连接失败"})]
+    emitted = events(response)
+    assert emitted[0] == ("delta", {"content": "已生成的内容"})
+    assert emitted[1][0] == "error" and emitted[1][1]["message"] == "模型连接失败"
+    assert emitted[1][1]["code"] == "AI_INVALID_RESPONSE" and emitted[1][1]["trace_id"]
     history = (await client.get(f"/api/chats/{record['id']}")).json()["messages"]
     assert history[1]["content"] == "已生成的内容"
     assert history[1]["status"] == "failed"
@@ -158,7 +161,9 @@ async def test_provider_disabled_error_still_keeps_user_message(chat_client, mon
     response = await client.post(f"/api/chats/{record['id']}/messages", json={
         "content": "用户内容", "request_id": "request-no-model",
     }, headers=csrf(client))
-    assert events(response) == [("error", {"message": "所选 Agent 不可用"})]
+    emitted = events(response)
+    assert emitted[0][0] == "error" and emitted[0][1]["message"] == "所选 Agent 不可用"
+    assert set(emitted[0][1]) == {"code", "message", "retry_policy", "outcome", "trace_id"}
     messages = (await client.get(f"/api/chats/{record['id']}")).json()["messages"]
     assert messages[0]["content"] == "用户内容"
     assert messages[1]["status"] == "failed"
@@ -302,10 +307,10 @@ async def test_invalid_attachment_cleans_private_temp_file(chat_client, monkeypa
     await register(client)
     record = await create(client)
 
-    def broken_parser(path):
+    async def broken_parser(path):
         raise ValueError("malformed document")
 
-    monkeypatch.setattr(chat, "extract_text", broken_parser)
+    monkeypatch.setattr(chat, "parse_document", broken_parser)
     response = await client.post(f"/api/chats/{record['id']}/attachments", files={
         "file": ("notes.txt", b"some notes", "text/plain"),
     }, headers=csrf(client))

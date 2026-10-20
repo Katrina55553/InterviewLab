@@ -39,6 +39,21 @@ class Settings(BaseSettings):
     AI_TIMEOUT_SECONDS: int = Field(default=90, ge=1, le=600)
     AI_MAX_CONCURRENCY: int = Field(default=4, ge=1, le=64)
     AI_COMMAND_LEASE_SECONDS: int = Field(default=150, ge=10, le=1800)
+    AI_MAX_WAITERS: int = Field(default=16, ge=0, le=1000)
+    AI_WAIT_SECONDS: float = Field(default=5, gt=0, le=60)
+    AI_BACKGROUND_CONCURRENCY: int = Field(default=2, ge=1, le=64)
+    AI_VISION_CONCURRENCY: int = Field(default=1, ge=1, le=16)
+    AI_PROVIDER_CONCURRENCY: int = Field(default=8, ge=1, le=256)
+    AI_INTERACTIVE_RESERVED_PERMITS: int = Field(default=2, ge=0, le=256)
+    AI_TOOL_CONCURRENCY: int = Field(default=2, ge=1, le=16)
+    AI_MAX_OUTPUT_TOKENS: int = Field(default=4096, ge=100, le=32000)
+    AI_CIRCUIT_MIN_CALLS: int = Field(default=10, ge=1, le=20)
+    AI_CIRCUIT_OPEN_SECONDS: float = Field(default=30, gt=0, le=600)
+    AI_UNKNOWN_LIMIT: int = Field(default=3, ge=1, le=100)
+    OUTBOX_REDELIVER_SECONDS: int = Field(default=60, ge=10, le=3600)
+    PARSER_PROCESSES: int = Field(default=2, ge=1, le=8)
+    MEDIA_MAX_CONNECTIONS: int = Field(default=8, ge=1, le=128)
+    SERVICE_ROLE: str = Field(default="backend", pattern=r"^(backend|worker|dispatcher|inspector)$")
 
     # 讯飞媒体能力；空凭据会明确禁用对应能力。
     XFYUN_APP_ID: str = ""
@@ -121,6 +136,13 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         """判断是否为生产环境"""
         return self.ENVIRONMENT == "production"
+
+    def validate_runtime(self) -> None:
+        if self.ENVIRONMENT in {"staging", "production"} and (
+            self.SECRET_KEY in {"change-me-in-production", "your-secret-key-here-change-in-production"}
+            or len(self.SECRET_KEY) < 32
+        ):
+            raise ValueError("生产环境需要稳定随机的 SECRET_KEY（至少32字符）；禁止使用示例密钥")
 
 
 # 全局配置实例

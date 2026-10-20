@@ -6,19 +6,25 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException
 
 from app.core.config import settings
 from app.core.database import close_db, init_db
 from app.core.redis import close_redis, init_redis
 from app.platform import admin, api, auth, chat, media
+from app.platform.contracts import PlatformError, TraceMiddleware, error_payload, traced
+from app.platform.operations.logging import configure_logging
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # startup
+    settings.validate_runtime()
+    configure_logging()
     await init_db()
     await init_redis()
     yield
@@ -45,6 +51,7 @@ app.add_middleware(
 )
 
 app.add_middleware(auth.AuthCSRFMiddleware)
+app.add_middleware(TraceMiddleware)
 
 # Only authenticated platform adapters are exposed; legacy anonymous routes are retired.
 app.include_router(auth.router, prefix="/api")
@@ -60,26 +67,47 @@ app.include_router(media.ws_router)
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """全局异常处理器"""
-    return JSONResponse(
-        status_code=500,
-        content={
-            "detail": "服务器内部错误",
-            "message": str(exc) if not settings.is_production else "请联系管理员",
-        },
-    )
+    import logging
+    # Starlette's outer error handler runs after the tracing middleware unwinds.
+    with traced(trace_id=request.state.trace_id):
+        logging.getLogger(__name__).error("request_failed", exc_info=True)
+        payload = error_payload(exc)
+    return JSONResponse(status_code=500, content={**payload, "detail": payload["message"]},
+                        headers={"x-trace-id": payload["trace_id"]})
+
+
+@app.exception_handler(HTTPException)
+@app.exception_handler(PlatformError)
+async def platform_error_handler(request: Request, exc: Exception):
+    payload = error_payload(exc)
+    return JSONResponse(status_code=getattr(exc, "status", getattr(exc, "status_code", 503)),
+                        content={**payload, "detail": payload["message"]})
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    payload = error_payload(HTTPException(422, "请求格式无效"))
+    return JSONResponse(status_code=422, content={**payload, "detail": payload["message"]})
 
 
 @app.exception_handler(ValueError)
 async def value_error_handler(request: Request, exc: ValueError):
     """参数错误处理器"""
-    return JSONResponse(
-        status_code=400,
-        content={"detail": "参数错误", "message": str(exc)},
-    )
+    payload = error_payload(HTTPException(400, "参数错误"))
+    return JSONResponse(status_code=400, content={**payload, "detail": payload["message"]})
 
 
 # 健康检查
 @app.get("/health")
+@app.get("/health/live")
 async def health_check():
     """健康检查端点"""
     return {"status": "ok", "version": "1.0.0"}
+
+
+@app.get("/health/ready")
+async def health_ready():
+    from app.platform.operations.health import readiness
+
+    body, status = await readiness()
+    return JSONResponse(body, status_code=status)

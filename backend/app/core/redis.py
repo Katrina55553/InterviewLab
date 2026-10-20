@@ -21,37 +21,18 @@ async def init_redis() -> None:
     """初始化 Redis 连接池
     带容错处理：Redis 不可用时记录警告但不阻断服务启动。
     """
-    import asyncio
-
     global redis_pool, redis_client
-
-    for attempt in range(5):
-        try:
-            redis_pool = redis.ConnectionPool.from_url(
-                settings.REDIS_URL,
-                max_connections=20,
-                decode_responses=True,
-                socket_connect_timeout=5,
-                socket_timeout=5,
-            )
-            redis_client = redis.Redis(connection_pool=redis_pool)
-
-            await redis_client.ping()
-            logger.info("Redis 连接初始化完成")
-            return
-        except Exception as e:
-            wait = (attempt + 1) * 3
-            logger.warning(
-                f"Redis 初始化失败 (尝试 {attempt + 1}/5): {e}，{wait}s 后重试"
-            )
-            if redis_pool:
-                with contextlib.suppress(Exception):
-                    await redis_pool.disconnect()
-                redis_pool = None
-                redis_client = None
-            await asyncio.sleep(wait)
-
-    logger.error("Redis 初始化多次失败，服务继续运行但部分功能不可用")
+    redis_pool = redis.ConnectionPool.from_url(
+        settings.REDIS_URL, max_connections=20, decode_responses=True,
+        socket_connect_timeout=1, socket_timeout=1,
+    )
+    redis_client = redis.Redis(connection_pool=redis_pool)
+    try:
+        await redis_client.ping()
+        logger.info("redis_connected")
+    except redis.RedisError:
+        # Retain the client: its pool reconnects on the next operation after recovery.
+        logger.warning("redis_degraded")
 
 
 async def close_redis() -> None:

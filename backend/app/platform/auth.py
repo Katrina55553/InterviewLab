@@ -163,7 +163,8 @@ class AuthCSRFMiddleware:
                 try:
                     await check_csrf(request)
                 except HTTPException as exc:
-                    await JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)(
+                    from app.platform.contracts import error_payload
+                    await JSONResponse({**error_payload(exc), "detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)(
                         scope, receive, send
                     )
                     return

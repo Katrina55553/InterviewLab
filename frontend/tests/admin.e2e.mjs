@@ -43,6 +43,8 @@ try {
     page.getByRole('button', { name: '登录研习室', exact: true }).click(),
   ]);
   assert.equal(loginResponse.status(), 200, await loginResponse.text());
+  assert.equal((await page.request.get(`${base}/api/admin/diagnostics`)).status(), 200);
+  assert.equal((await page.request.get(`${base}/metrics`)).status(), 404);
   await page.getByRole('link', { name: '管理设置', exact: true }).click();
   await page.getByLabel('连接名称', { exact: true }).fill(providerName);
   await page.getByLabel('API 地址', { exact: true }).fill('https://example.invalid/v1');
@@ -61,6 +63,15 @@ try {
   assert.equal(updatedProvider.model, 'test-model-v2');
   assert.equal(updatedProvider.has_key, true);
   assert.ok(!await page.locator('body').innerText().then(text => text.includes(fakeKey)));
+  await page.locator('.config-row').filter({ hasText: providerName }).getByRole('button', { name: '历史', exact: true }).click();
+  await page.getByRole('heading', { name: '配置修订记录', exact: true }).waitFor();
+  const restoredProvider = await mutation(`/api/admin/revisions/provider/${provider.id}/restore`, () =>
+    page.locator('.config-row').filter({ has: page.getByRole('heading', { name: '版本 1', exact: true }) })
+      .getByRole('button', { name: '恢复为新版本', exact: true }).click());
+  assert.equal(restoredProvider.version, 3);
+  assert.equal(restoredProvider.model, 'test-model');
+  assert.ok(!JSON.stringify(await (await page.request.get(`${base}/api/admin/revisions/provider/${provider.id}`)).json()).includes(fakeKey));
+  await page.getByRole('heading', { name: '配置修订记录', exact: true }).waitFor({ state: 'hidden' });
   await page.screenshot({ path: resolve(output, '09-admin-providers.png'), fullPage: true });
   await page.getByRole('button', { name: '智能体配置', exact: true }).click();
   assert.equal(await page.getByRole('combobox', { name: /^使用场景/ }).inputValue(), '');
@@ -84,10 +95,17 @@ try {
   assert.equal(updatedAgent.scene, null);
   assert.ok((await getAgents()).some(item => item.id === agent.id));
   await page.screenshot({ path: resolve(output, '10-admin-agents.png'), fullPage: true });
-  await page.getByRole('link', { name: 'AI 对话', exact: true }).click();
-  await page.getByRole('combobox', { name: /^对话助手/ }).selectOption(agent.id);
-  const chat = await mutation('/api/chats', () => page.getByRole('button', { name: '新建对话', exact: true }).click());
+  // The current JD workspace uses the default scene; independent Agent binding
+  // remains an API capability and is exercised before streaming in the browser.
+  const csrf = (await page.context().cookies()).find(cookie => cookie.name === 'ra_csrf')?.value;
+  assert.ok(csrf);
+  const chatResponse = await page.request.post(`${base}/api/chats`, {
+    headers: { 'X-CSRF-Token': csrf }, data: { agent_id: agent.id },
+  });
+  assert.equal(chatResponse.status(), 201, await chatResponse.text());
+  const chat = await chatResponse.json();
   assert.equal(chat.agent_id, agent.id);
+  await page.goto(`${base}/chat/${chat.id}`);
   await page.getByLabel('消息内容').fill('如何把技术决策讲清楚？');
   await page.getByRole('button', { name: '发送', exact: true }).click();
   await page.locator('.message-assistant .rich-text').waitFor();
@@ -100,7 +118,7 @@ try {
   await mutation(`/api/admin/providers/${provider.id}`, () => page.locator('.config-row').filter({ hasText: providerName }).getByRole('button', { name: '删除', exact: true }).click());
   createdProviderId = null;
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ passed: true, checks: ['admin route', 'create + edit provider', 'secret not returned', 'blank key preserves secret', 'independent Agent scene=null', 'tool selection', 'Agent enable + provider reset', 'Agent-backed SSE chat', 'remove own test fixtures'], screenshots: output }, null, 2));
+  console.log(JSON.stringify({ passed: true, checks: ['admin diagnostics + private metrics', 'create + edit provider', 'secret not returned', 'blank key preserves secret', 'revision history + restore as new version', 'independent Agent scene=null', 'tool selection', 'Agent enable + provider reset', 'Agent API binding + browser SSE chat', 'remove own test fixtures'], screenshots: output }, null, 2));
 } catch (error) {
   await page.screenshot({ path: resolve(output, 'admin-failure.png'), fullPage: true });
   console.error(await page.locator('body').innerText());
@@ -108,8 +126,11 @@ try {
 } finally {
   const csrf = (await page.context().cookies()).find(cookie => cookie.name === 'ra_csrf')?.value;
   if (csrf) {
-    if (createdAgentId) await page.request.delete(`${base}/api/admin/agents/${createdAgentId}`, { headers: { 'X-CSRF-Token': csrf } }).catch(() => {});
-    if (createdProviderId) await page.request.delete(`${base}/api/admin/providers/${createdProviderId}`, { headers: { 'X-CSRF-Token': csrf } }).catch(() => {});
+    for (const [kind, id] of [['agents', createdAgentId], ['providers', createdProviderId]]) {
+      if (!id) continue;
+      const record = await (await page.request.get(`${base}/api/admin/${kind}/${id}`)).json().catch(() => null);
+      if (record?.version) await page.request.delete(`${base}/api/admin/${kind}/${id}?expected_version=${record.version}`, { headers: { 'X-CSRF-Token': csrf } }).catch(() => {});
+    }
   }
   await browser.close();
 }

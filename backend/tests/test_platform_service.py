@@ -542,7 +542,9 @@ async def test_real_postgres_dispatcher_cannot_publish_uncommitted_outbox(platfo
         assert published == []
         await db.commit()
     assert await worker.dispatch_once() == 1
-    assert published[0][1]["args"] == [job.id]
+    assert published[0][1]["args"][0] == job.id
+    assert len(published[0][1]["args"]) == 3
+    assert published[0][1]["task_id"] != job.id
     assert await worker.dispatch_once() == 0
     async with platform_db.sessions() as db:
         assert (await db.get(Outbox, job.id)).status == "published"

@@ -7,6 +7,8 @@ from celery import Celery
 
 from app.core.config import settings
 
+settings.validate_runtime()
+
 # 创建 Celery 实例
 celery_app = Celery(
     "resume_agent",
@@ -39,4 +41,11 @@ celery_app.conf.update(
 
     # 默认队列
     task_default_queue="default",
+    worker_prefetch_multiplier=1,
+    broker_connection_timeout=5,
+    broker_transport_options={"socket_timeout": 5, "socket_connect_timeout": 5, "max_retries": 0},
 )
+
+from app.platform.operations.worker_health import install_signals  # noqa: E402
+
+install_signals()

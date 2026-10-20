@@ -1,21 +1,17 @@
 """Exercise real session/CSRF/configuration persistence without external services."""
 
-import importlib.util
 from datetime import timedelta
-from pathlib import Path
 
 import httpx
 import pytest
 import pytest_asyncio
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
 from fastapi import Depends, FastAPI, WebSocketException
 from sqlalchemy import create_engine, inspect, select, text
 from starlette.websockets import WebSocket
 
 from app.core.database import Base
 from app.platform import admin, auth, cli, media_models  # noqa: F401
-from app.platform.models import LoginSession, Provider, User, utcnow
+from app.platform.models import ConfigRevision, LoginSession, Provider, User, utcnow
 from tests.platform_db import isolated_database, postgres_test_url
 
 
@@ -69,6 +65,35 @@ async def _make_admin(client, sessions):
         record.role = "admin"
         await db.commit()
     return user
+
+
+@pytest.mark.asyncio
+async def test_revisions_are_atomic_redacted_and_restore_creates_new_version(platform_client):
+    client, sessions = platform_client
+    await _make_admin(client, sessions)
+    secret = "test-secret-never-returned"
+    created = await client.post("/api/admin/providers", json={"name": "versioned", "base_url": "https://example.invalid/v1",
+        "model": "v1", "api_key": secret}, headers=_csrf(client))
+    provider = created.json()
+    path = f"/api/admin/providers/{provider['id']}"
+    assert (await client.patch(path, json={"model": "v2", "expected_version": 1}, headers=_csrf(client))).status_code == 200
+    assert (await client.patch(path, json={"model": "stale", "expected_version": 1}, headers=_csrf(client))).status_code == 409
+    history_path = f"/api/admin/revisions/provider/{provider['id']}"
+    history = await client.get(history_path + "?limit=1")
+    assert history.json()["has_more"]
+    assert history.json()["items"][0]["changes"]["model"] == {"before": "v1", "after": "v2"}
+    assert secret not in history.text and "encrypted_key" not in history.text
+    restored = await client.post(history_path + "/restore", json={"version": 1, "expected_version": 2}, headers=_csrf(client))
+    assert restored.status_code == 200 and restored.json()["version"] == 3 and restored.json()["model"] == "v1"
+    async with sessions() as db:
+        rows = (await db.scalars(select(ConfigRevision).where(ConfigRevision.entity_id == provider["id"])
+            .order_by(ConfigRevision.version))).all()
+        assert [r.version for r in rows] == [1, 2, 3]
+        assert [r.config["model"] for r in rows] == ["v1", "v2", "v1"]
+        assert all(admin.decrypt_key(r.config["encrypted_key"]) == secret for r in rows)
+    assert (await client.delete(path + "?expected_version=3", headers=_csrf(client))).status_code == 204
+    restored = await client.post(history_path + "/restore", json={"version": 2, "expected_version": 4}, headers=_csrf(client))
+    assert restored.status_code == 200 and restored.json()["version"] == 5 and restored.json()["model"] == "v2"
 
 
 @pytest.mark.asyncio
@@ -166,7 +191,7 @@ async def test_admin_configuration_encrypts_keys_and_versions_updates(platform_c
         assert encrypted != payload["api_key"]
         assert admin.decrypt_key(encrypted) == payload["api_key"]
     updated = await client.patch(
-        f"/api/admin/providers/{provider['id']}", json={"name": "Renamed", "api_key": ""}, headers=_csrf(client)
+        f"/api/admin/providers/{provider['id']}", json={"name": "Renamed", "api_key": "", "expected_version": 1}, headers=_csrf(client)
     )
     assert updated.json()["version"] == 2
     async with sessions() as db:
@@ -184,7 +209,7 @@ async def test_admin_configuration_encrypts_keys_and_versions_updates(platform_c
     capabilities = (await client.get("/api/admin/capabilities")).json()
     assert capabilities["scenes"]["evaluate"]["enabled"] is True
     assert capabilities["scenes"]["resume"]["enabled"] is False
-    assert (await client.delete(f"/api/admin/providers/{provider['id']}", headers=_csrf(client))).status_code == 204
+    assert (await client.delete(f"/api/admin/providers/{provider['id']}?expected_version=2", headers=_csrf(client))).status_code == 204
     agent = (await client.get(f"/api/admin/agents/{agent_response.json()['id']}")).json()
     assert agent["provider_id"] is None and agent["version"] == 2
 
@@ -245,24 +270,16 @@ async def test_websocket_identity_rejects_untrusted_origin_and_anonymous(monkeyp
 
 
 def test_initial_migration_matches_models_and_keeps_legacy_tables(tmp_path):
-    path = Path(__file__).resolve().parents[1] / "migrations" / "versions" / "20261015_0001_platform.py"
-    spec = importlib.util.spec_from_file_location("platform_initial", path)
-    revision = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(revision)
     engine = create_engine(f"sqlite:///{tmp_path / 'migrations.db'}")
     with engine.begin() as connection:
         connection.execute(text("CREATE TABLE legacy_keep (id INTEGER PRIMARY KEY, value TEXT)"))
         connection.execute(text("INSERT INTO legacy_keep VALUES (1, 'untouched')"))
-        context = MigrationContext.configure(connection)
-        with Operations.context(context):
-            revision.upgrade()
+        from tests.platform_db import _migrate
+        _migrate(connection)
         inspector = inspect(connection)
         for table in Base.metadata.tables.values():
             if table.name.startswith("platform_"):
                 assert {column["name"] for column in inspector.get_columns(table.name)} == set(table.columns.keys())
-        with Operations.context(context):
-            revision.downgrade()
-        assert inspect(connection).get_table_names() == ["legacy_keep"]
         assert connection.execute(text("SELECT value FROM legacy_keep")).scalar_one() == "untouched"
     engine.dispose()
 

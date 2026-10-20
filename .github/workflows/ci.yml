@@ -98,17 +98,73 @@ jobs:
       - name: Test (pytest)
         run: pytest tests/ -v --tb=short -p no:cacheprovider
 
-  # ── Docker 镜像构建（仅验证，不推送）─────────────────────
   docker:
-    name: Docker Build
+    name: Full stack, fault matrix and immutable images
     runs-on: ubuntu-latest
     needs: [frontend, backend]
-    if: github.event_name == 'push'
+    env:
+      TEST_BACKEND_IMAGE: resume-agent-backend:${{ github.sha }}
+      TEST_FRONTEND_IMAGE: resume-agent-frontend:${{ github.sha }}
+      E2E_BASE_URL: http://127.0.0.1:18080
+      E2E_ADMIN_USERNAME: ci_admin
+      E2E_ADMIN_PASSWORD: disposable-admin-password-2026
     steps:
       - uses: actions/checkout@v4
-
-      - name: Build backend image
-        run: docker build -t resume-agent-backend ./backend
-
-      - name: Build frontend image
-        run: docker build -t resume-agent-frontend ./frontend
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: pip install httpx==0.27.0
+      - name: Release script syntax
+        run: bash -n scripts/deploy-release.sh scripts/rollback-release.sh
+      - run: npm ci && npx playwright install --with-deps chromium
+        working-directory: frontend
+      - name: Build the exact release images
+        run: |
+          docker build --label org.opencontainers.image.revision=${{ github.sha }} -t "$TEST_BACKEND_IMAGE" ./backend
+          docker build --label org.opencontainers.image.revision=${{ github.sha }} -t "$TEST_FRONTEND_IMAGE" ./frontend
+      - name: Start isolated real-mode protocol stack
+        run: docker compose -p resumeagent-engineering-test -f docker-compose.test.yml up -d --no-build --wait --wait-timeout 180
+      - name: Alert firing and healthy-state rules
+        run: docker compose -p resumeagent-engineering-test -f docker-compose.test.yml --profile monitoring run --rm --no-deps alerts
+      - name: Independent process kills and Redis loss
+        run: python backend/tests/fault_matrix.py
+      - name: Bounded dual-instance load and provider circuit probe
+        run: python backend/tests/capacity_probe.py
+      - name: Explicit demo stack for browser acceptance
+        env:
+          TEST_DEMO_MODE: "true"
+        run: |
+          docker compose -p resumeagent-engineering-test -f docker-compose.test.yml up -d --no-build --wait --wait-timeout 180
+          docker compose -p resumeagent-engineering-test -f docker-compose.test.yml exec -T backend python -c "import asyncio; from app.platform.cli import create_admin; asyncio.run(create_admin('ci_admin', 'disposable-admin-password-2026'))"
+      - run: npm run test:e2e && npm run test:e2e:admin
+        working-directory: frontend
+      - name: Save tested images and release sources
+        if: github.event_name == 'push'
+        run: |
+          mkdir -p release/operations release/scripts
+          docker save "$TEST_BACKEND_IMAGE" | gzip > release/backend.tar.gz
+          docker save "$TEST_FRONTEND_IMAGE" | gzip > release/frontend.tar.gz
+          cp docker-compose.yml release/
+          cp operations/* release/operations/
+          cp scripts/deploy-release.sh scripts/rollback-release.sh release/scripts/
+          cd release && sha256sum *.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push'
+        with:
+          name: release-${{ github.sha }}
+          path: release/
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: engineering-evidence
+          include-hidden-files: true
+          path: |
+            backend/.test-work/faults/
+            frontend/test-results/
+      - name: Stop isolated stack
+        if: always()
+        run: docker compose -p resumeagent-engineering-test -f docker-compose.test.yml down -v

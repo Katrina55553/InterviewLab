@@ -1,6 +1,15 @@
+export interface ErrorContract {
+  code: string;
+  message: string;
+  retry_policy: 'never' | 'manual' | 'automatic';
+  outcome: 'not_sent' | 'known' | 'unknown';
+  trace_id: string;
+}
+
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) { super(message); this.status = status }
+  contract?: ErrorContract;
+  constructor(message: string, status: number, contract?: ErrorContract) { super(message); this.status = status; this.contract = contract }
 }
 
 export function csrfToken(): string {
@@ -22,9 +31,9 @@ export async function checkResponse(response: Response): Promise<Response> {
   if (response.ok) return response;
   if (response.status === 401) window.dispatchEvent(new Event('meeting:session-expired'));
   const body = await response.json().catch(() => null);
-  const detail = body?.detail ?? body?.message;
+  const detail = body?.message ?? body?.detail;
   const message = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map(item => item.msg).filter(Boolean).join('；') : detail?.message ?? detail?.error;
-  throw new ApiError(message ?? (response.status === 401 ? '登录已过期，请重新登录。' : `请求失败（${response.status}）`), response.status);
+  throw new ApiError(message ?? (response.status === 401 ? '登录已过期，请重新登录。' : `请求失败（${response.status}）`), response.status, body?.code ? body : undefined);
 }
 
 export async function api<T>(path: string, options: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {

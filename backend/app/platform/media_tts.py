@@ -84,18 +84,27 @@ def validate_audio_url(url: str) -> None:
 
 async def tts_request(path: str, body: dict, api_key: str, api_secret: str) -> dict:
     # httpx has no automatic retry. A timed-out create must remain unknown.
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10), follow_redirects=False) as client:
+    import time
+
+    from app.platform.ai.guard import gate
+
+    async with gate("media").enter(time.monotonic() + 5), httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10), follow_redirects=False) as client:
         response = await client.post(tts_signed_url(path, api_key, api_secret), json=body)
         response.raise_for_status()
         return parse_tts_response(response.json())
 
 
 async def download_audio(url: str, destination: Path) -> None:
+    import time
+
+    from app.platform.ai.guard import gate
+
     validate_audio_url(url)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(".part")
     try:
         async with (
+            gate("media").enter(time.monotonic() + 5),
             httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10), follow_redirects=False) as client,
             client.stream("GET", url) as response,
         ):

@@ -1,6 +1,7 @@
 # Ruff 配置
 target-version = "py312"
 line-length = 120
+extend-exclude = [".test-runtime", ".test-work"]
 
 [lint]
 select = [

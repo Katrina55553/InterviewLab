@@ -29,12 +29,15 @@ def postgres_test_url() -> str | None:
 
 
 def _migrate(connection):
-    path = Path(__file__).resolve().parents[1] / "migrations" / "versions" / "20261015_0001_platform.py"
-    spec = importlib.util.spec_from_file_location("platform_test_initial", path)
-    revision = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(revision)
-    with Operations.context(MigrationContext.configure(connection)):
-        revision.upgrade()
+    from alembic.script import ScriptDirectory
+
+    scripts = ScriptDirectory(str(Path(__file__).resolve().parents[1] / "migrations"))
+    for entry in reversed(list(scripts.walk_revisions())):
+        spec = importlib.util.spec_from_file_location("platform_test_" + entry.revision, entry.path)
+        revision = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(revision)
+        with Operations.context(MigrationContext.configure(connection)):
+            revision.upgrade()
 
 
 @asynccontextmanager

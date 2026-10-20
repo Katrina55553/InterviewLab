@@ -51,13 +51,25 @@ async def get_db() -> AsyncSession:
 
 async def init_db() -> None:
     """Validate migration state; application startup never mutates database schema."""
+    async with engine.connect() as conn:
+        await validate_migrations(conn)
+    logger.info("平台数据库迁移检查通过")
+
+
+def migration_heads() -> set[str]:
+    from pathlib import Path
+
+    from alembic.script import ScriptDirectory
+
+    return set(ScriptDirectory(str(Path(__file__).resolve().parents[2] / "migrations")).get_heads())
+
+
+async def validate_migrations(conn) -> None:
     from sqlalchemy import text
 
-    async with engine.connect() as conn:
-        version = await conn.scalar(text("SELECT version_num FROM platform_alembic_version"))
-        if version != "20261015_0001":
-            raise RuntimeError("数据库尚未迁移，请先运行 python -m app.platform.cli migrate")
-    logger.info("平台数据库迁移检查通过")
+    versions = set((await conn.execute(text("SELECT version_num FROM platform_alembic_version"))).scalars())
+    if versions != migration_heads():
+        raise RuntimeError("数据库尚未迁移，请先运行 python -m app.platform.cli migrate")
 
 
 async def close_db() -> None:

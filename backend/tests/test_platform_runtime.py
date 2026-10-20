@@ -83,6 +83,7 @@ def audit(monkeypatch):
     end = AsyncMock()
     monkeypatch.setattr(runtime, "_begin_call", begin)
     monkeypatch.setattr(runtime, "_end_call", end)
+    monkeypatch.setattr(runtime, "_mark_sent", AsyncMock())
     monkeypatch.setattr(runtime.settings, "AI_MAX_CONCURRENCY", 1)
     return begin, end
 
@@ -136,7 +137,9 @@ async def test_all_declared_tool_ids_receive_results_even_when_execution_budget_
     answered = [message["tool_call_id"] for message in second_request if message["role"] == "tool"]
     assert sorted(declared) == sorted(answered) == [f"call-{index}" for index in range(5)]
     assert execute.call_count == 3
-    assert audit_usage(audit[1]) == {"prompt_tokens": 28, "completion_tokens": 10}
+    assert audit[0].await_count == audit[1].await_count == 2
+    assert sum(c.args[3]["prompt_tokens"] for c in audit[1].await_args_list) == 28
+    assert sum(c.args[3]["completion_tokens"] for c in audit[1].await_args_list) == 10
 
 
 @pytest.mark.asyncio
@@ -166,10 +169,11 @@ async def test_nested_code_verification_with_concurrency_one_does_not_deadlock(m
     assert result == {"result": "ok"}
     assert len(sdk.requests) == 3
     assert not sdk.requests[1].get("tools")
-    assert audit[0].await_count == audit[1].await_count == 2
+    assert audit[0].await_count == audit[1].await_count == 3
     usages = [call.args[3] if len(call.args) > 3 else call.kwargs.get("usage") for call in audit[1].await_args_list]
     assert {"prompt_tokens": 20, "completion_tokens": 8} in usages
-    assert {"prompt_tokens": 15, "completion_tokens": 5} in usages
+    assert {"prompt_tokens": 10, "completion_tokens": 2} in usages
+    assert {"prompt_tokens": 5, "completion_tokens": 3} in usages
 
 
 @pytest.mark.asyncio
@@ -178,8 +182,12 @@ async def test_unapproved_tool_never_executes_but_receives_protocol_result(monke
 
     execute = Mock()
     monkeypatch.setattr(tools, "execute_tool", execute)
-    results = await runtime._tools([{"id": "denied", "name": "delete_files", "arguments": {}}],
-                                   ["lookup_resume_field"], None, configuration())
+    import time
+
+    from app.platform.ai.execution import tools as run_tools
+
+    results = await run_tools([{"id": "denied", "name": "delete_files", "arguments": {}}],
+                                   ["lookup_resume_field"], None, configuration(), time.monotonic() + 5)
     assert results == [{"role": "tool", "tool_call_id": "denied", "content": "工具未获授权"}]
     execute.assert_not_called()
 

@@ -17,7 +17,9 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.core.database import async_session_maker
+from app.platform.ai.guard import gate
 from app.platform.auth import check_csrf, current_user, websocket_user
+from app.platform.contracts import PlatformError, error_payload
 from app.platform.media_asr import TranscriptAssembler, asr_signed_url, check_asr_error, decode_packet
 from app.platform.media_models import MediaTask, VisionFeedback
 from app.platform.media_tts import (
@@ -101,7 +103,7 @@ async def asr_socket(websocket: WebSocket, interview_id: str) -> None:
     try:
         credentials = _require_speech()
     except HTTPException as exc:
-        await websocket.send_json({"type": "error", "code": "unavailable", "message": exc.detail})
+        await websocket.send_json({"type": "error", **error_payload(exc)})
         await websocket.close(code=1013)
         return
     tasks: list[asyncio.Task] = []
@@ -115,7 +117,7 @@ async def asr_socket(websocket: WebSocket, interview_id: str) -> None:
         base_url = getattr(settings, "XFYUN_ASR_URL", "wss://office-api-ast-dx.iflyaisol.com/ast/communicate/v1")
         if not base_url.startswith("wss://"):
             raise ValueError("语音识别服务必须使用加密连接")
-        async with connect(asr_signed_url(base_url, *credentials), open_timeout=10, close_timeout=3,
+        async with gate("media").enter(time.monotonic() + 1), connect(asr_signed_url(base_url, *credentials), open_timeout=10, close_timeout=3,
                            max_size=1024 * 1024, max_queue=8, ping_interval=20) as upstream:
             first = decode_packet(await asyncio.wait_for(upstream.recv(), timeout=10))
             check_asr_error(first)
@@ -138,7 +140,7 @@ async def asr_socket(websocket: WebSocket, interview_id: str) -> None:
     except Exception as exc:
         message = str(exc) if isinstance(exc, ValueError) else "语音连接中断，请重新开启麦克风；已转写文字仍可编辑"
         with contextlib.suppress(Exception):
-            await websocket.send_json({"type": "error", "code": "asr_failed", "message": message})
+            await websocket.send_json({"type": "error", **error_payload(exc if isinstance(exc, PlatformError) else AIError(message, unknown=True))})
     finally:
         for task in tasks:
             task.cancel()
@@ -175,6 +177,8 @@ async def _run_asr_stream(websocket, upstream, provider_sid: str, first: dict,
                 try:
                     queue.put_nowait(chunk)
                 except asyncio.QueueFull as exc:
+                    from app.platform.operations.telemetry import record
+                    await record("media_backpressure", workload="media")
                     raise ValueError("音频发送过快或网络拥塞，请重新开启麦克风") from exc
             elif message.get("text"):
                 command = json.loads(message["text"])
@@ -388,8 +392,8 @@ async def analyze_frame(interview_id: str, file: UploadFile = File(...),
                 ), timeout=30)
             if not feedback:
                 raise ValueError("Empty vision response")
-        except AIError as exc:
-            raise HTTPException(503, str(exc)) from exc
+        except PlatformError:
+            raise
         except Exception:
             raise HTTPException(502, "视觉服务暂时不可用，文本和语音面试可继续") from None
         record = VisionFeedback(

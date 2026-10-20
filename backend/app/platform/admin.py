@@ -6,15 +6,15 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import select, update
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.core.database import async_session_maker
 from app.platform.auth import require_admin
-from app.platform.models import Agent, Provider
+from app.platform.models import Agent, AiCall, AiPermit, ConfigRevision, Outbox, Provider, User, new_id
 
 router = APIRouter(prefix="/admin", tags=["platform-admin"], dependencies=[Depends(require_admin)])
 Scene = Literal["resume", "questions", "evaluate", "followup", "report", "chat", "vision"]
@@ -79,6 +79,7 @@ class ProviderCreate(BaseModel):
 
 
 class ProviderUpdate(BaseModel):
+    expected_version: int = Field(ge=1)
     model_config = ConfigDict(extra="forbid")
     name: str | None = Field(default=None, min_length=1, max_length=100)
     base_url: str | None = Field(default=None, min_length=1, max_length=2000)
@@ -125,6 +126,7 @@ class AgentCreate(BaseModel):
 
 
 class AgentUpdate(BaseModel):
+    expected_version: int = Field(ge=1)
     model_config = ConfigDict(extra="forbid")
     name: str | None = Field(default=None, min_length=1, max_length=100)
     scene: Scene | None = None
@@ -176,6 +178,91 @@ def agent_json(agent: Agent) -> dict:
     }
 
 
+def check_version(row, expected):
+    if row.version != expected:
+        raise HTTPException(409, "配置已被修改，请刷新后重试")
+
+
+def record_revision(db, kind, row, actor_id, *, deleted=False):
+    config = {c.name: getattr(row, c.name) for c in row.__table__.columns if c.name != "created_at"}
+    db.add(ConfigRevision(id=new_id(), kind=kind, entity_id=row.id, version=row.version,
+                          actor_id=actor_id, config=config, deleted=deleted))
+
+
+def safe_revision(config):
+    return {**{k: v for k, v in config.items() if k != "encrypted_key"},
+            **({"has_key": bool(config.get("encrypted_key"))} if "encrypted_key" in config else {})}
+
+
+@router.get("/diagnostics")
+async def diagnostics():
+    """Authenticated finite aggregate data; no prompts, results, credentials or user IDs."""
+    from app.platform.ai.guard import database_now
+    from app.platform.operations.health import readiness
+
+    health, _ = await readiness()
+    async with async_session_maker() as db:
+        now = await database_now(db)
+        unknown = await db.scalar(select(func.count()).select_from(AiCall).where(AiCall.outcome == "unknown"))
+        permits = await db.scalar(select(func.count()).select_from(AiPermit).where(AiPermit.lease_until > now))
+        queued = await db.scalar(select(func.count()).select_from(Outbox).where(Outbox.execution_status == "queued"))
+    return {"health": health, "unknown_calls": unknown, "active_permits": permits, "queued_jobs": queued}
+
+
+@router.get("/revisions/{kind}/{entity_id}")
+async def revisions(kind: Literal["provider", "agent"], entity_id: str,
+                    offset: int = Query(default=0, ge=0), limit: int = Query(default=20, ge=1, le=100)):
+    async with async_session_maker() as db:
+        rows = (await db.scalars(select(ConfigRevision).where(ConfigRevision.kind == kind,
+            ConfigRevision.entity_id == entity_id).order_by(ConfigRevision.version.desc()).offset(offset).limit(limit + 1))).all()
+        result = []
+        for index, row in enumerate(rows[:limit]):
+            previous = rows[index + 1].config if index + 1 < len(rows) else {}
+            safe, old = safe_revision(row.config), safe_revision(previous)
+            result.append({"id": row.id, "version": row.version, "actor_id": row.actor_id, "created_at": row.created_at,
+                           "deleted": row.deleted, "config": safe,
+                           "changes": {k: {"before": old.get(k), "after": v} for k, v in safe.items() if old.get(k) != v},
+                           "key_changed": row.config.get("encrypted_key") != previous.get("encrypted_key")})
+        return {"items": result, "has_more": len(rows) > limit}
+
+
+class RestoreRevision(BaseModel):
+    version: int = Field(ge=1)
+    expected_version: int = Field(ge=1)
+
+
+@router.post("/revisions/{kind}/{entity_id}/restore")
+async def restore_revision(kind: Literal["provider", "agent"], entity_id: str, body: RestoreRevision,
+                           user: User = Depends(require_admin)):
+    from app.platform.ai.guard import lock_scope
+
+    model = Provider if kind == "provider" else Agent
+    async with async_session_maker() as db, db.begin():
+        await lock_scope(db, "config:" + kind + ":" + entity_id)
+        row = await db.scalar(select(model).where(model.id == entity_id).with_for_update())
+        latest = await db.scalar(select(ConfigRevision).where(ConfigRevision.kind == kind,
+            ConfigRevision.entity_id == entity_id).order_by(ConfigRevision.version.desc()).limit(1))
+        old = await db.scalar(select(ConfigRevision).where(ConfigRevision.kind == kind,
+            ConfigRevision.entity_id == entity_id, ConfigRevision.version == body.version))
+        if not latest or not old:
+            raise HTTPException(404, "配置修订不存在")
+        if latest.version != body.expected_version:
+            raise HTTPException(409, "配置已被修改，请刷新后重试")
+        fields = {k: v for k, v in old.config.items() if k not in {"id", "version"}}
+        if kind == "agent":
+            await _check_provider(db, fields.get("provider_id"))
+        if row is None:
+            row = model(id=entity_id, **fields, version=latest.version + 1)
+            db.add(row)
+        else:
+            for key, value in fields.items():
+                setattr(row, key, value)
+            row.version = latest.version + 1
+        await db.flush()
+        record_revision(db, kind, row, user.id)
+        return provider_json(row) if kind == "provider" else agent_json(row)
+
+
 @router.get("/providers")
 async def list_providers() -> list[dict]:
     async with async_session_maker() as db:
@@ -185,11 +272,13 @@ async def list_providers() -> list[dict]:
 
 
 @router.post("/providers", status_code=201)
-async def create_provider(body: ProviderCreate) -> dict:
+async def create_provider(body: ProviderCreate, user: User = Depends(require_admin)) -> dict:
     fields = body.model_dump(exclude={"api_key"})
     provider = Provider(**fields, encrypted_key=encrypt_key(body.api_key.strip()) if body.api_key.strip() else None)
     async with async_session_maker() as db:
         db.add(provider)
+        await db.flush()
+        record_revision(db, "provider", provider, user.id)
         await db.commit()
     return provider_json(provider)
 
@@ -197,7 +286,7 @@ async def create_provider(body: ProviderCreate) -> dict:
 @router.get("/providers/{provider_id}")
 async def get_provider(provider_id: str) -> dict:
     async with async_session_maker() as db:
-        provider = await db.get(Provider, provider_id)
+        provider = await db.scalar(select(Provider).where(Provider.id == provider_id).with_for_update())
         if provider is None:
             raise HTTPException(status_code=404, detail="模型配置不存在")
         return provider_json(provider)
@@ -205,34 +294,39 @@ async def get_provider(provider_id: str) -> dict:
 
 @router.patch("/providers/{provider_id}")
 @router.put("/providers/{provider_id}")
-async def update_provider(provider_id: str, body: ProviderUpdate) -> dict:
+async def update_provider(provider_id: str, body: ProviderUpdate, user: User = Depends(require_admin)) -> dict:
     async with async_session_maker() as db:
         provider = (
             await db.execute(select(Provider).where(Provider.id == provider_id).with_for_update())
         ).scalar_one_or_none()
         if provider is None:
             raise HTTPException(status_code=404, detail="模型配置不存在")
-        fields = body.model_dump(exclude_unset=True, exclude_none=True, exclude={"api_key"})
+        check_version(provider, body.expected_version)
+        fields = body.model_dump(exclude_unset=True, exclude_none=True, exclude={"api_key", "expected_version"})
         if body.api_key and body.api_key.strip():
             fields["encrypted_key"] = encrypt_key(body.api_key.strip())
         if fields:
             for key, value in fields.items():
                 setattr(provider, key, value)
             provider.version += 1
+            record_revision(db, "provider", provider, user.id)
         await db.commit()
         return provider_json(provider)
 
 
 @router.delete("/providers/{provider_id}", status_code=204)
-async def delete_provider(provider_id: str) -> Response:
+async def delete_provider(provider_id: str, expected_version: int = Query(ge=1), user: User = Depends(require_admin)) -> Response:
     async with async_session_maker() as db:
-        provider = await db.get(Provider, provider_id)
+        provider = await db.scalar(select(Provider).where(Provider.id == provider_id).with_for_update())
         if provider is None:
             raise HTTPException(status_code=404, detail="模型配置不存在")
-        # Configuration changes must be visible on the dependent Agent version too.
-        await db.execute(
-            update(Agent).where(Agent.provider_id == provider_id).values(provider_id=None, version=Agent.version + 1)
-        )
+        check_version(provider, expected_version)
+        dependents = (await db.scalars(select(Agent).where(Agent.provider_id == provider_id).with_for_update())).all()
+        for agent in dependents:
+            agent.provider_id, agent.version = None, agent.version + 1
+            record_revision(db, "agent", agent, user.id)
+        provider.version += 1
+        record_revision(db, "provider", provider, user.id, deleted=True)
         await db.delete(provider)
         await db.commit()
     return Response(status_code=204)
@@ -250,12 +344,14 @@ async def _check_provider(db, provider_id: str | None) -> None:
 
 
 @router.post("/agents", status_code=201)
-async def create_agent(body: AgentCreate) -> dict:
+async def create_agent(body: AgentCreate, user: User = Depends(require_admin)) -> dict:
     async with async_session_maker() as db:
         await _check_provider(db, body.provider_id)
         agent = Agent(**body.model_dump())
         db.add(agent)
         try:
+            await db.flush()
+            record_revision(db, "agent", agent, user.id)
             await db.commit()
         except IntegrityError as exc:
             await db.rollback()
@@ -266,7 +362,7 @@ async def create_agent(body: AgentCreate) -> dict:
 @router.get("/agents/{agent_id}")
 async def get_agent(agent_id: str) -> dict:
     async with async_session_maker() as db:
-        agent = await db.get(Agent, agent_id)
+        agent = await db.scalar(select(Agent).where(Agent.id == agent_id).with_for_update())
         if agent is None:
             raise HTTPException(status_code=404, detail="智能体不存在")
         return agent_json(agent)
@@ -274,12 +370,13 @@ async def get_agent(agent_id: str) -> dict:
 
 @router.patch("/agents/{agent_id}")
 @router.put("/agents/{agent_id}")
-async def update_agent(agent_id: str, body: AgentUpdate) -> dict:
+async def update_agent(agent_id: str, body: AgentUpdate, user: User = Depends(require_admin)) -> dict:
     async with async_session_maker() as db:
         agent = (await db.execute(select(Agent).where(Agent.id == agent_id).with_for_update())).scalar_one_or_none()
         if agent is None:
             raise HTTPException(status_code=404, detail="智能体不存在")
-        fields = body.model_dump(exclude_unset=True)
+        check_version(agent, body.expected_version)
+        fields = body.model_dump(exclude_unset=True, exclude={"expected_version"})
         # scene/provider_id explicitly support null to clear a binding.
         fields = {key: value for key, value in fields.items() if value is not None or key in {"scene", "provider_id"}}
         if "provider_id" in fields:
@@ -288,6 +385,7 @@ async def update_agent(agent_id: str, body: AgentUpdate) -> dict:
             for key, value in fields.items():
                 setattr(agent, key, value)
             agent.version += 1
+            record_revision(db, "agent", agent, user.id)
         try:
             await db.commit()
         except IntegrityError as exc:
@@ -297,11 +395,14 @@ async def update_agent(agent_id: str, body: AgentUpdate) -> dict:
 
 
 @router.delete("/agents/{agent_id}", status_code=204)
-async def delete_agent(agent_id: str) -> Response:
+async def delete_agent(agent_id: str, expected_version: int = Query(ge=1), user: User = Depends(require_admin)) -> Response:
     async with async_session_maker() as db:
-        agent = await db.get(Agent, agent_id)
+        agent = await db.scalar(select(Agent).where(Agent.id == agent_id).with_for_update())
         if agent is None:
             raise HTTPException(status_code=404, detail="智能体不存在")
+        check_version(agent, expected_version)
+        agent.version += 1
+        record_revision(db, "agent", agent, user.id, deleted=True)
         await db.delete(agent)
         await db.commit()
     return Response(status_code=204)

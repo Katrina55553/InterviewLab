@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from app.core.config import settings
 from app.core.database import Base, async_session_maker, engine
 from app.platform.auth import Credentials, hash_password
-from app.platform.models import User
+from app.platform.models import Outbox, User, new_id
 
 
 def migrate() -> None:
@@ -36,6 +36,22 @@ async def create_admin(username: str, password: str) -> None:
     print(f"管理员 {credentials.username} 已创建")
 
 
+async def probe_jobs():
+    jobs = [new_id() for _ in range(3)]
+    async with async_session_maker() as db, db.begin():
+        for job_id, queue in zip(jobs, ("default", "prepare", "report"), strict=True):
+            db.add(Outbox(id=job_id, kind="probe:" + queue, aggregate_id="operations", payload={},
+                          status="pending", execution_status="queued"))
+    async with asyncio.timeout(90):
+        while True:
+            async with async_session_maker() as db:
+                statuses = list((await db.scalars(select(Outbox.execution_status).where(Outbox.id.in_(jobs)))).all())
+                if len(statuses) == 3 and all(s == "completed" for s in statuses):
+                    print("All three durable task queues completed their probes")
+                    return
+            await asyncio.sleep(.5)
+
+
 async def reset_dev(confirmation: str | None) -> None:
     if settings.ENVIRONMENT != "development":
         raise ValueError("reset-dev 只允许在 ENVIRONMENT=development 时执行")
@@ -55,6 +71,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="ResumeAgent 新平台维护工具")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("migrate", help="升级新平台数据库；不修改旧版表")
+    commands.add_parser("check-config", help="验证生产密钥和运行配置")
+    commands.add_parser("probe-jobs", help="验证 default、prepare、report 队列的持久任务完成")
     admin = commands.add_parser("create-admin", help="交互输入密码，创建管理员")
     admin.add_argument("--username", required=True)
     reset = commands.add_parser("reset-dev", help="删除并重建 platform_ 表；仅限开发环境")
@@ -63,6 +81,12 @@ def main() -> None:
     try:
         if args.command == "migrate":
             migrate()
+        elif args.command == "check-config":
+            settings.validate_runtime()
+            if not settings.is_production:
+                raise ValueError("发布门禁要求 ENVIRONMENT=production")
+        elif args.command == "probe-jobs":
+            asyncio.run(probe_jobs())
         elif args.command == "create-admin":
             password = getpass.getpass("管理员密码（至少 8 位）: ")
             if password != getpass.getpass("再次输入密码: "):

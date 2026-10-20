@@ -106,8 +106,8 @@ try {
   assert.equal(partialReport.turns.length, 2);
   assert.equal(partialReport.overall_score, Math.round(partialReport.turns[0].score / 2));
   await page.screenshot({ path: resolve(output, '08-partial-report.png'), fullPage: true });
-  await page.getByRole('link', { name: 'AI 对话', exact: true }).click();
-  await page.getByRole('button', { name: '新建对话', exact: true }).click();
+  await page.goto(`${base}/resumes/${resumeId}`);
+  await page.getByRole('button', { name: '和 AI 讨论改进建议', exact: true }).click();
   await page.waitForURL(/\/chat\//);
   await page.getByLabel('消息内容').fill('怎样用 STAR 方法介绍一个技术项目？');
   await page.getByRole('button', { name: '发送', exact: true }).click();

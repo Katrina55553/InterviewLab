@@ -1,0 +1,43 @@
+groups:
+  - name: platform
+    rules:
+      - alert: PlatformDatabaseUnavailable
+        expr: platform_database_up == 0 or up{job="platform"} == 0
+        for: 30s
+        annotations:
+          summary: Platform database or exporter unavailable
+      - alert: PlatformUnknownResults
+        expr: sum(increase(platform_ai_attempts_total{outcome=~"unknown|interrupted"}[5m])) > 2 or sum(delta(platform_flights{status="unknown"}[5m])) > 2
+        for: 30s
+        annotations:
+          summary: Unknown AI outcomes require investigation; do not automatically retry
+      - alert: PlatformProviderFailures
+        expr: sum(rate(platform_ai_attempts_total{outcome=~"failed|unknown"}[5m])) / clamp_min(sum(rate(platform_ai_attempts_total[5m])), 0.001) > 0.5
+        for: 2m
+        annotations:
+          summary: AI failures exceed the initial investigation threshold
+      - alert: PlatformOutboxBlocked
+        expr: platform_outbox_oldest_seconds > 120
+        for: 1m
+        annotations:
+          summary: Durable jobs are waiting for delivery or consumption
+      - alert: PlatformWorkerMissing
+        expr: platform_healthy_instances{role=~"worker|dispatcher|inspector"} < 1
+        for: 1m
+        annotations:
+          summary: A required platform process has no recent heartbeat
+      - alert: PlatformAdmissionOverloaded
+        expr: sum(increase(platform_rejected_total[5m])) > 10
+        for: 1m
+        annotations:
+          summary: AI admission is rejecting excess load
+      - alert: PlatformProviderTimeouts
+        expr: sum(increase(platform_ai_timeout_total[5m])) > 2
+        for: 30s
+        annotations:
+          summary: Provider calls are exceeding their total deadline
+      - alert: PlatformCircuitOpen
+        expr: sum(platform_circuits{state="open"}) > 0
+        for: 10s
+        annotations:
+          summary: A process provider circuit is open; review correlated failure records

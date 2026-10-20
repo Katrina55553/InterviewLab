@@ -2,21 +2,14 @@
 
 import copy
 import json
-from typing import Annotated, TypedDict
+from typing import TypedDict
 
 from langgraph.graph import END, StateGraph
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import ValidationError
 
+from app.platform.domain.results import Evaluation
 from app.platform.models import new_id
 from app.platform.runtime import DIMENSIONS, AIError, complete
-
-
-class Evaluation(BaseModel):
-    score: int = Field(ge=0, le=100, strict=True)
-    dimensions: dict[str, Annotated[int, Field(ge=0, le=100, strict=True)]]
-    feedback: str = Field(min_length=1)
-    missing_points: list[str] = Field(default_factory=list)
-    follow_up_needed: bool = False
 
 
 class RunState(TypedDict, total=False):

@@ -1,6 +1,8 @@
 services:
   # 前端：Nginx 代理 + 静态文件
   frontend:
+    mem_limit: ${FRONTEND_MEMORY_LIMIT:-128m}
+    image: ${FRONTEND_IMAGE:-resumeagent-frontend:local}
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -9,7 +11,7 @@ services:
     depends_on:
       - backend
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
       interval: 30s
       timeout: 10s
       retries: 10
@@ -18,6 +20,8 @@ services:
 
   # 后端：FastAPI
   backend:
+    mem_limit: ${BACKEND_MEMORY_LIMIT:-1g}
+    image: ${BACKEND_IMAGE:-resumeagent-backend:local}
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -31,11 +35,11 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test:
         - CMD-SHELL
-        - python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"
+        - python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5)"
       interval: 30s
       timeout: 10s
       retries: 10
@@ -43,11 +47,15 @@ services:
     restart: unless-stopped
 
   # Celery 异步任务
-  celery:
+  celery: &worker
+    mem_limit: ${WORKER_MEMORY_LIMIT:-2g}
+    image: ${BACKEND_IMAGE:-resumeagent-backend:local}
     build:
       context: ./backend
       dockerfile: Dockerfile
-    command: celery -A app.tasks.celery_app worker --loglevel=info -Q default
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2 -Q prepare,default
+    environment:
+      SERVICE_ROLE: worker
     volumes:
       - uploads:/app/uploads
     env_file:
@@ -62,7 +70,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - celery -A app.tasks.celery_app inspect ping >/dev/null 2>&1 || exit 1
+        - python -m app.platform.operations.health
       interval: 60s
       timeout: 15s
       retries: 10
@@ -71,6 +79,7 @@ services:
 
   # Explicit, versioned schema upgrade before web/worker processes start.
   migrate:
+    image: ${BACKEND_IMAGE:-resumeagent-backend:local}
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -82,11 +91,25 @@ services:
         condition: service_healthy
     restart: "no"
 
+  celery-report:
+    <<: *worker
+    mem_limit: ${REPORT_MEMORY_LIMIT:-1g}
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=1 -Q report
+
   outbox:
+    mem_limit: ${OPERATIONS_MEMORY_LIMIT:-256m}
+    image: ${BACKEND_IMAGE:-resumeagent-backend:local}
     build:
       context: ./backend
       dockerfile: Dockerfile
     command: python -m app.platform.worker
+    environment:
+      SERVICE_ROLE: dispatcher
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.platform.operations.health"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
     env_file:
       - ./backend/.env
     depends_on:
@@ -96,8 +119,47 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  inspector:
+    mem_limit: ${OPERATIONS_MEMORY_LIMIT:-256m}
+    image: ${BACKEND_IMAGE:-resumeagent-backend:local}
+    build: ./backend
+    command: python -m app.platform.operations.recovery
+    environment:
+      SERVICE_ROLE: inspector
+    env_file: ./backend/.env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.platform.operations.health"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+    restart: unless-stopped
+
+  metrics:
+    mem_limit: ${OPERATIONS_MEMORY_LIMIT:-256m}
+    image: ${BACKEND_IMAGE:-resumeagent-backend:local}
+    build: ./backend
+    command: uvicorn app.platform.operations.metrics:app --host 0.0.0.0 --port 9090
+    env_file: ./backend/.env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  prometheus:
+    mem_limit: ${MONITORING_MEMORY_LIMIT:-512m}
+    image: prom/prometheus:v3.2.1
+    profiles: [monitoring]
+    volumes:
+      - ./operations/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./operations/alerts.yml:/etc/prometheus/alerts.yml:ro
+    depends_on: [metrics]
+
   # PostgreSQL 数据库
   postgres:
+    mem_limit: ${POSTGRES_MEMORY_LIMIT:-1g}
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: resume_agent
@@ -114,6 +176,7 @@ services:
 
   # Redis
   redis:
+    mem_limit: ${REDIS_MEMORY_LIMIT:-512m}
     image: redis:7-alpine
     command: redis-server --appendonly yes
     volumes:

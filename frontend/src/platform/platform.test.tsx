@@ -10,7 +10,7 @@ let container: HTMLDivElement;
 let root: Root;
 const report: Report = { overall_score: 84, resume_score: 80, dimensions: { professional: 85, project: 83, analysis: 82, logic: 86, completeness: 84 }, completion: { asked: 1, total: 1, answered: 1, skipped: 0 }, turns: [{ question: '请介绍一个项目。', answer: '我负责队列设计，最终减少延迟。', score: 84, feedback: '回答清晰，建议补充量化结果。' }], suggestions: ['加入具体的数据与结果。'], summary: '项目经历表达清晰。' };
 const resume: Resume = { id: 'r-1', filename: '我的简历.txt', status: 'ready', parsed: { skills: ['Python', 'React'] }, preparation: { resume_score: 80, suggestions: ['补充成果数据'] }, created_at: '2026-10-15T10:00:00Z' };
-const initial: Interview = { id: 'i-1', resume_id: 'r-1', status: 'draft', version: 0, current_question: null, messages: [], evaluations: [], created_at: '2026-10-15T10:00:00Z' };
+const initial: Interview = { id: 'i-1', resume_id: 'r-1', status: 'ready', version: 0, current_question: null, messages: [], evaluations: [], created_at: '2026-10-15T10:00:00Z' };
 let snapshot: Interview;
 let commands: Record<string, unknown>[];
 let failCommand = false;
