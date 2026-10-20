@@ -19,7 +19,7 @@ from app.platform.models import Agent, Provider
 router = APIRouter(prefix="/admin", tags=["platform-admin"], dependencies=[Depends(require_admin)])
 Scene = Literal["resume", "questions", "evaluate", "followup", "report", "chat", "vision"]
 SCENES = ("resume", "questions", "evaluate", "followup", "report", "chat", "vision")
-AVAILABLE_TOOLS = frozenset({"search_knowledge_base", "lookup_resume_field", "verify_code_snippet"})
+AVAILABLE_TOOLS = frozenset({"lookup_resume_field", "verify_code_snippet"})
 
 
 def _fernet() -> Fernet:
@@ -169,7 +169,7 @@ def agent_json(agent: Agent) -> dict:
         "scene": agent.scene,
         "provider_id": agent.provider_id,
         "prompt": agent.prompt,
-        "tools": agent.tools,
+        "tools": [tool for tool in agent.tools if tool in AVAILABLE_TOOLS],
         "enabled": agent.enabled,
         "version": agent.version,
         "created_at": agent.created_at,

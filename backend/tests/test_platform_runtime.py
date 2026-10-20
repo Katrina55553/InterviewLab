@@ -244,6 +244,19 @@ def provider(identifier, *, vision=False, enabled=True):
 
 
 @pytest.mark.asyncio
+async def test_retired_tools_in_stored_agents_are_filtered_without_mutating_rows(monkeypatch):
+    from app.platform.admin import agent_json
+
+    agent = Agent(id="old-agent", name="Old agent", scene="chat", enabled=True, version=1,
+                  tools=["retired_tool", "lookup_resume_field"])
+    monkeypatch.setattr(runtime, "async_session_maker", lambda: ConfigSession([agent], []))
+    config = (await runtime.freeze_configs())["chat"]
+    assert config["tools"] == ["lookup_resume_field"]
+    assert agent_json(agent)["tools"] == ["lookup_resume_field"]
+    assert agent.tools == ["retired_tool", "lookup_resume_field"]
+
+
+@pytest.mark.asyncio
 async def test_frozen_vision_selects_enabled_image_provider_and_copies_version(monkeypatch):
     selected = provider("enabled-vision", vision=True)
     providers = [provider("text-model"), provider("disabled-vision", vision=True, enabled=False), selected]

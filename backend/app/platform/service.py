@@ -335,9 +335,9 @@ async def run_job(job_id: str) -> None:
     heartbeat = asyncio.create_task(_heartbeat(Outbox, job_id, owner))
     try:
         if kind == "prepare":
-            from app.tasks.parse_task import _extract_text, _mask_raw_text
+            from app.core.documents import extract_text, mask_raw_text
 
-            raw = _mask_raw_text(await asyncio.to_thread(_extract_text, filename))
+            raw = mask_raw_text(await asyncio.to_thread(extract_text, filename))
             if len(raw.strip()) < 20:
                 raise AIError("未提取到足够文本，请上传可提取文字的 PDF、DOCX 或 TXT")
             with call_scope(user_id):

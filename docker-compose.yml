@@ -47,7 +47,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    command: celery -A app.tasks.celery_app worker --loglevel=info -Q parse,report,default
+    command: celery -A app.tasks.celery_app worker --loglevel=info -Q default
     volumes:
       - uploads:/app/uploads
     env_file:
@@ -96,24 +96,6 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Elasticsearch（全文检索）
-  elasticsearch:
-    profiles: ["rag"]
-    image: elasticsearch:8.11.0
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - ES_JAVA_OPTS=-Xms256m -Xmx256m
-    volumes:
-      - esdata:/usr/share/elasticsearch/data
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 20
-      start_period: 60s
-    restart: unless-stopped
-
   # PostgreSQL 数据库
   postgres:
     image: postgres:16-alpine
@@ -147,4 +129,3 @@ volumes:
   pgdata:
   redisdata:
   uploads:
-  esdata:

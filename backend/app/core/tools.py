@@ -8,8 +8,6 @@ import json
 import logging
 from collections.abc import Callable
 
-from app.core.rag import extract_technical_keywords, retrieve_context
-
 logger = logging.getLogger(__name__)
 
 # ============================================================
@@ -17,23 +15,6 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 TOOLS: list[dict] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "search_knowledge_base",
-            "description": "从面试题知识库中检索相关技术资料。当需要验证候选人的技术回答、查找参考答案、或获取追问灵感时调用。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "检索关键词，如 'MySQL 索引原理' 或 'Redis 缓存穿透'",
-                    },
-                },
-                "required": ["query"],
-            },
-        },
-    },
     {
         "type": "function",
         "function": {
@@ -91,14 +72,6 @@ TOOLS: list[dict] = [
 # ============================================================
 
 
-def search_knowledge_base(query: str) -> str:
-    """从知识库检索相关技术资料"""
-    keywords = extract_technical_keywords(query)
-    search_query = " ".join(keywords) if keywords else query
-    result = retrieve_context(search_query, top_k=3)
-    return result or "未找到相关知识库内容"
-
-
 def lookup_resume_field(field: str, resume_data: dict | None = None) -> str:
     """查看简历字段"""
     if not resume_data:
@@ -151,9 +124,6 @@ def verify_code_snippet(code: str, language: str, context: str = "") -> str:
 
 # 工具名 → 执行函数的映射
 _TOOL_REGISTRY: dict[str, Callable] = {
-    "search_knowledge_base": lambda args: search_knowledge_base(
-        query=args.get("query", ""),
-    ),
     "lookup_resume_field": lambda args: lookup_resume_field(
         field=args.get("field", ""),
         resume_data=args.get("_resume_data"),

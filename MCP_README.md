@@ -95,11 +95,10 @@ MCP Server (app/mcp/server.py)  ← 独立进程，无需 FastAPI
     │
     │ 直接调用内部模块
     │
-    ├── app/tasks/parse_task.py    → 简历解析
-    ├── app/tasks/diagnose_task.py → AI 诊断
-    ├── app/agent/nodes/           → 面试状态机
-    ├── app/core/llm.py            → LLM 调用
-    └── app/core/database.py       → PostgreSQL
+    ├── app/platform/service.py   → 鉴权资源归属与统一面试命令
+    ├── app/platform/graph.py     → 简历准备、面试与报告
+    ├── app/platform/runtime.py   → 冻结配置与 LLM 调用
+    └── app/core/database.py      → PostgreSQL
 ```
 
 ## 支持的 AI 工具

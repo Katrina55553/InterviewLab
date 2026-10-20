@@ -18,8 +18,8 @@ def test_malformed_dsml_tool_call_without_arguments_is_ignored():
 简历信息，我看到候选人提到了两个具体项目，但并未列出10个产品。现在我需要针对这个存疑点进行提问。
 
 <｜｜DSML｜｜tool_calls>
-<｜｜DSML｜｜invoke name="search_knowledge_base">
-<｜｜DSML｜｜invoke name="search_knowledge_base">
+<｜｜DSML｜｜invoke name="lookup_resume_field">
+<｜｜DSML｜｜invoke name="lookup_resume_field">
 </｜｜DSML｜｜invoke>
 </｜｜DSML｜｜tool_calls>
 """
@@ -32,7 +32,7 @@ def test_dsml_tool_text_is_not_displayable_content():
 简历信息，我看到候选人提到了两个具体项目，但并未列出10个产品。现在我需要针对这个存疑点进行提问。
 
 <｜｜DSML｜｜tool_calls>
-<｜｜DSML｜｜invoke name="search_knowledge_base">
+<｜｜DSML｜｜invoke name="lookup_resume_field">
 </｜｜DSML｜｜tool_calls>
 """
 
@@ -42,8 +42,8 @@ def test_dsml_tool_text_is_not_displayable_content():
 def test_dsml_tool_call_with_arguments_is_parsed():
     content = """
 <｜｜DSML｜｜tool_calls>
-<｜｜DSML｜｜invoke name="search_knowledge_base">
-{"query": "FastAPI WebSocket 面试问题"}
+<｜｜DSML｜｜invoke name="lookup_resume_field">
+{"field": "projects"}
 </｜｜DSML｜｜invoke>
 </｜｜DSML｜｜tool_calls>
 """
@@ -51,8 +51,8 @@ def test_dsml_tool_call_with_arguments_is_parsed():
     assert _parse_tool_calls_from_text(content) == [
         {
             "id": "call_0",
-            "name": "search_knowledge_base",
-            "arguments": {"query": "FastAPI WebSocket 面试问题"},
+            "name": "lookup_resume_field",
+            "arguments": {"field": "projects"},
         },
     ]
 
@@ -62,9 +62,9 @@ def test_stream_drops_entire_output_when_dsml_is_split_across_chunks(monkeypatch
         "简历信息，我看到候选人提到了两个具体项目，",
         "但并未列出10个产品。",
         "<｜｜DSML｜｜tool_calls>",
-        "<｜｜DSML｜｜invoke name=\"search_knowledge_base\">",
-        "<｜｜DSML｜｜invoke name=\"search_knowledge_base\">",
-        "<｜｜DSML｜｜invoke name=\"search_knowledge_base\">",
+        "<｜｜DSML｜｜invoke name=\"lookup_resume_field\">",
+        "<｜｜DSML｜｜invoke name=\"lookup_resume_field\">",
+        "<｜｜DSML｜｜invoke name=\"lookup_resume_field\">",
         "</｜｜DSML｜｜invoke>",
         "</｜｜DSML｜｜invoke>",
         "</｜｜DSML｜｜invoke>",
@@ -112,7 +112,7 @@ def test_stream_yields_plain_question(monkeypatch):
 
 def test_plain_llm_call_drops_dsml_text(monkeypatch):
     monkeypatch.setattr(llm, "_get_client", lambda: _fake_text_client(
-        "<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name=\"search_knowledge_base\"></｜｜DSML｜｜tool_calls>",
+        "<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name=\"lookup_resume_field\"></｜｜DSML｜｜tool_calls>",
     ))
 
     assert call_llm("system", "user") == ""
@@ -120,7 +120,7 @@ def test_plain_llm_call_drops_dsml_text(monkeypatch):
 
 def test_routed_llm_call_drops_dsml_text(monkeypatch):
     monkeypatch.setattr(llm, "_get_client", lambda: _fake_text_client(
-        "我需要调用工具。<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name=\"search_knowledge_base\">",
+        "我需要调用工具。<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name=\"lookup_resume_field\">",
     ))
 
     assert call_llm_routed("question", "system", "user") == ""

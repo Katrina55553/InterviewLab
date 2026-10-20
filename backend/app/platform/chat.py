@@ -17,10 +17,10 @@ from sqlalchemy import delete, select, update
 
 from app.core.config import settings
 from app.core.database import async_session_maker
+from app.core.documents import extract_text, mask_raw_text
 from app.platform.auth import check_csrf, current_user
 from app.platform.models import Agent, Chat, ChatMessage, User, new_id, utcnow
 from app.platform.runtime import AIError, call_scope, freeze_configs, stream_chat
-from app.tasks.parse_task import _extract_text, _mask_raw_text
 from app.utils.security.file_upload import validate_upload_file
 
 router = APIRouter(prefix="/chats", tags=["platform-chat"])
@@ -322,7 +322,7 @@ async def attach_file(chat_id: str, file: UploadFile = File(...), user: User = D
         with tempfile.NamedTemporaryFile(dir=temporary_root, suffix=suffix, delete=False) as temporary:
             path = Path(temporary.name)
         await asyncio.to_thread(path.write_bytes, await file.read())
-        extraction = asyncio.create_task(asyncio.to_thread(_extract_text, str(path)))
+        extraction = asyncio.create_task(asyncio.to_thread(extract_text, str(path)))
         try:
             extracted = await asyncio.shield(extraction)
         except asyncio.CancelledError:
@@ -333,7 +333,7 @@ async def attach_file(chat_id: str, file: UploadFile = File(...), user: User = D
             raise
         except Exception:
             raise HTTPException(422, "附件文本提取失败，请检查文件是否损坏或加密") from None
-        extracted = _mask_raw_text(extracted.strip())[:MAX_ATTACHMENT_CHARACTERS]
+        extracted = mask_raw_text(extracted.strip())[:MAX_ATTACHMENT_CHARACTERS]
         if not extracted:
             raise HTTPException(422, "附件没有可提取文字，扫描件请先进行 OCR")
         async with async_session_maker() as db, db.begin():

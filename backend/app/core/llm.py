@@ -21,7 +21,6 @@ _client: OpenAI | None = None
 
 _DSML_TOOL_RE = re.compile(r"<\s*/?\s*[｜|]{0,4}\s*DSML\s*[｜|]{0,4}\s*(tool_calls|invoke|call)?", re.IGNORECASE)
 _TOOL_REQUIRED_ARGS = {
-    "search_knowledge_base": {"query"},
     "lookup_resume_field": {"field"},
     "verify_code_snippet": {"code", "language"},
 }
@@ -351,14 +350,14 @@ def _parse_tool_calls_from_text(content: str) -> list[dict[str, Any]]:
 
     DeepSeek 实际输出格式：
     <｜｜DSML｜｜tool_calls>
-    <｜｜DSML｜｜invoke name="search_knowledge_base">
-    <｜｜DSML｜｜invoke name="search_knowledge_base">
+    <｜｜DSML｜｜invoke name="lookup_resume_field">
+    <｜｜DSML｜｜invoke name="lookup_resume_field">
     </｜｜DSML｜｜invoke>
     </｜｜DSML｜｜invoke>
     </｜｜DSML｜｜tool_calls>
     """
     tool_calls = []
-    known_tools = {"search_knowledge_base", "lookup_resume_field", "verify_code_snippet"}
+    known_tools = {"lookup_resume_field", "verify_code_snippet"}
 
     # 模式 1：XML 属性格式 — name="func_name"
     # 匹配 <...invoke name="func_name"...> 或 <...call name="func_name"...>
@@ -383,7 +382,7 @@ def _parse_tool_calls_from_text(content: str) -> list[dict[str, Any]]:
             return tool_calls
 
     # 模式 2：函数调用格式 — func_name({...})
-    func_pattern = r'(search_knowledge_base|lookup_resume_field|verify_code_snippet)\s*\((\{[^)]*\})\)'
+    func_pattern = r'(lookup_resume_field|verify_code_snippet)\s*\((\{[^)]*\})\)'
     matches = re.findall(func_pattern, content, re.DOTALL)
     if matches:
         for func_name, args_str in matches:

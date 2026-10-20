@@ -17,8 +17,8 @@ from sqlalchemy import func, select, text
 
 from app.core.config import settings
 from app.core.database import async_session_maker
+from app.core.documents import mask_raw_text
 from app.platform.models import Agent, AiCall, Provider, new_id, utcnow
-from app.tasks.parse_task import _mask_raw_text
 
 logger = logging.getLogger(__name__)
 DIMENSIONS = ("professional", "project", "analysis", "logic", "completeness")
@@ -93,11 +93,13 @@ def _semaphore() -> asyncio.Semaphore:
 
 async def freeze_configs(agent_id: str | None = None) -> dict:
     """Copy encrypted credentials/config versions so admin edits cannot alter a run."""
+    from app.core.tools import get_tools
     from app.platform.admin import encrypt_key
 
     async with async_session_maker() as db:
         agents = list((await db.scalars(select(Agent))).all())
         providers = {p.id: p for p in (await db.scalars(select(Provider))).all()}
+    available_tools = {tool["function"]["name"] for tool in get_tools()}
     configs = {}
     for scene in SCENES:
         agent = next((a for a in agents if a.scene == scene), None)
@@ -116,8 +118,8 @@ async def freeze_configs(agent_id: str | None = None) -> dict:
             "agent_id": agent.id if agent else None,
             "agent_version": agent.version if agent else 0,
             "prompt": (agent.prompt if agent else "") or DEFAULT_PROMPTS[scene],
-            "tools": list(agent.tools) if agent else (
-                ["search_knowledge_base", "lookup_resume_field", "verify_code_snippet"]
+            "tools": [tool for tool in agent.tools if tool in available_tools] if agent else (
+                ["lookup_resume_field", "verify_code_snippet"]
                 if scene in ("questions", "evaluate", "chat") else []
             ),
             "enabled": scene_enabled,
@@ -191,7 +193,7 @@ async def complete(config: dict, prompt: str, *, json_mode: bool = True, resume:
 
     messages = [
         {"role": "system", "content": config["prompt"] + ("\n只输出一个 JSON 对象。" if json_mode else "")},
-        {"role": "user", "content": _mask_raw_text(prompt)},
+        {"role": "user", "content": mask_raw_text(prompt)},
     ]
     tools = [t for t in get_tools() if t["function"]["name"] in config.get("tools", [])]
     started = time.monotonic()
@@ -251,7 +253,7 @@ async def stream_chat(config: dict, messages: list[dict]) -> AsyncIterator[str]:
     from app.core.llm import _parse_tool_calls_from_text
     from app.core.tools import get_tools
 
-    safe_messages = [{**m, "content": _mask_raw_text(m["content"])} for m in messages]
+    safe_messages = [{**m, "content": mask_raw_text(m["content"])} for m in messages]
     history = [{"role": "system", "content": config["prompt"]}, *safe_messages]
     tools = [t for t in get_tools() if t["function"]["name"] in config.get("tools", [])]
     started = time.monotonic()

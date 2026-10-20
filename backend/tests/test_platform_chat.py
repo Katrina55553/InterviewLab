@@ -305,7 +305,7 @@ async def test_invalid_attachment_cleans_private_temp_file(chat_client, monkeypa
     def broken_parser(path):
         raise ValueError("malformed document")
 
-    monkeypatch.setattr(chat, "_extract_text", broken_parser)
+    monkeypatch.setattr(chat, "extract_text", broken_parser)
     response = await client.post(f"/api/chats/{record['id']}/attachments", files={
         "file": ("notes.txt", b"some notes", "text/plain"),
     }, headers=csrf(client))

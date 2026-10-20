@@ -1,51 +1,11 @@
 """Tool Calling 工具模块测试
 
-覆盖 3 个工具函数 + 工具调度器 execute_tool。
+覆盖 2 个工具函数 + 工具调度器 execute_tool。
 """
 
 from unittest.mock import patch
 
 from app.core import tools
-
-# ============================================================
-# search_knowledge_base
-# ============================================================
-
-
-class TestSearchKnowledgeBase:
-    """知识库检索工具"""
-
-    def test_returns_retrieved_context(self):
-        """retrieve_context 有结果时返回检索内容"""
-        with patch.object(tools, "retrieve_context", return_value="MySQL 索引原理..."):
-            result = tools.search_knowledge_base("MySQL 索引")
-        assert "MySQL" in result
-
-    def test_returns_fallback_when_no_result(self):
-        """retrieve_context 返回空时给出兜底文案"""
-        with patch.object(tools, "retrieve_context", return_value=""):
-            result = tools.search_knowledge_base("不存在的关键词")
-        assert result == "未找到相关知识库内容"
-
-    def test_uses_extracted_keywords_when_available(self):
-        """extract_technical_keywords 提取到关键词时用关键词检索"""
-        with (
-            patch.object(tools, "extract_technical_keywords", return_value=["MySQL", "Redis"]),
-            patch.object(tools, "retrieve_context", return_value="ok") as mock_retrieve,
-        ):
-            tools.search_knowledge_base("聊聊 MySQL 和 Redis")
-        # 检索时使用拼接后的关键词
-        mock_retrieve.assert_called_once_with("MySQL Redis", top_k=3)
-
-    def test_falls_back_to_raw_query_when_no_keywords(self):
-        """extract_technical_keywords 返回空时使用原始 query"""
-        with (
-            patch.object(tools, "extract_technical_keywords", return_value=[]),
-            patch.object(tools, "retrieve_context", return_value="ok") as mock_retrieve,
-        ):
-            tools.search_knowledge_base("聊聊你的项目")
-        mock_retrieve.assert_called_once_with("聊聊你的项目", top_k=3)
-
 
 # ============================================================
 # lookup_resume_field
@@ -116,15 +76,6 @@ class TestVerifyCodeSnippet:
 class TestExecuteTool:
     """工具调度器"""
 
-    def test_dispatches_to_search_knowledge_base(self):
-        with patch.object(tools, "search_knowledge_base", return_value="检索结果") as mock_search:
-            result = tools.execute_tool(
-                "search_knowledge_base",
-                {"query": "Redis 缓存"},
-            )
-        assert result == "检索结果"
-        mock_search.assert_called_once_with(query="Redis 缓存")
-
     def test_dispatches_to_lookup_resume_field_with_resume_data(self):
         resume_data = {"skills": ["Python"]}
         with patch.object(tools, "lookup_resume_field", return_value="Python") as mock_lookup:
@@ -152,16 +103,16 @@ class TestExecuteTool:
 
     def test_catches_exception_and_returns_error_message(self):
         """工具执行抛异常时返回错误信息而非崩溃"""
-        with patch.object(tools, "search_knowledge_base", side_effect=RuntimeError("boom")):
-            result = tools.execute_tool("search_knowledge_base", {"query": "x"})
+        with patch.object(tools, "lookup_resume_field", side_effect=RuntimeError("boom")):
+            result = tools.execute_tool("lookup_resume_field", {"field": "skills"})
         assert "工具执行失败" in result
         assert "boom" in result
 
     def test_resume_data_not_injected_when_none(self):
         """resume_data 为 None 时不修改 tool_args"""
-        with patch.object(tools, "search_knowledge_base", return_value="ok"):
-            args = {"query": "test"}
-            tools.execute_tool("search_knowledge_base", args, resume_data=None)
+        with patch.object(tools, "lookup_resume_field", return_value="ok"):
+            args = {"field": "skills"}
+            tools.execute_tool("lookup_resume_field", args, resume_data=None)
         # 原始 args 不应被污染
         assert "_resume_data" not in args
 
@@ -174,14 +125,13 @@ class TestExecuteTool:
 class TestGetTools:
     """工具定义"""
 
-    def test_returns_three_tools(self):
+    def test_returns_two_tools(self):
         tool_list = tools.get_tools()
-        assert len(tool_list) == 3
+        assert len(tool_list) == 2
 
     def test_tool_names_match_registry(self):
         names = {t["function"]["name"] for t in tools.get_tools()}
         assert names == {
-            "search_knowledge_base",
             "lookup_resume_field",
             "verify_code_snippet",
         }

@@ -37,17 +37,6 @@ celery_app.conf.update(
     # 结果过期时间
     result_expires=3600,  # 1 小时
 
-    # 队列配置
-    task_routes={
-        "app.tasks.parse_task.*": {"queue": "parse"},
-        "app.tasks.report_task.*": {"queue": "report"},
-    },
-
     # 默认队列
     task_default_queue="default",
 )
-
-# 显式导入任务模块（autodiscover 只找 tasks.py，找不到 parse_task.py）
-import app.tasks.diagnose_task  # noqa: E402, F401
-import app.tasks.parse_task  # noqa: E402, F401
-import app.tasks.report_task  # noqa: E402, F401

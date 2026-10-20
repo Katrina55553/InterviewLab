@@ -33,9 +33,9 @@ class RunState(TypedDict, total=False):
 
 async def score_resume(state: RunState) -> dict:
     if state["demo"]:
-        from app.tasks.parse_task import _rule_based_parse
+        from app.core.documents import parse_demo_resume
 
-        parsed = _rule_based_parse(state["raw_text"])
+        parsed = parse_demo_resume(state["raw_text"])
         result = {"resume_score": 60, "suggestions": ["演示评分：补充项目职责、技术决策及可验证的数据结果。"]}
     else:
         result = await complete(state["configs"]["resume"], (

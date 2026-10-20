@@ -19,16 +19,12 @@ class Settings(BaseSettings):
     # Redis 配置
     REDIS_URL: str = "redis://localhost:6379/0"
 
-    # Elasticsearch
-    ELASTICSEARCH_URL: str = "http://elasticsearch:9200"
-
     # LLM API（OpenAI 兼容格式，支持 DeepSeek 等第三方）
     LLM_BASE_URL: str = "https://api.deepseek.com"
     LLM_API_KEY: str = ""
     LLM_MODEL: str = "deepseek-chat"
     LLM_MODEL_LIGHT: str = "deepseek-chat"
     LLM_MODEL_HEAVY: str = "deepseek-reasoner"
-    LLM_MODEL_EMBEDDING: str = "deepseek-embedding"
 
     # 安全配置
     SECRET_KEY: str = Field(default="change-me-in-production", min_length=16)
@@ -66,12 +62,6 @@ class Settings(BaseSettings):
     # 限流配置
     RATE_LIMIT_PER_MINUTE: int = Field(default=60, ge=1, le=1000)
     TOKEN_QUOTA_PER_USER: int = Field(default=100000, ge=1000)
-
-    # RAG 检索配置
-    # 检索模式：fusion=双路 RRF 融合（默认）/ cascade=串行降级（老逻辑）/ vector_only=仅向量
-    RETRIEVAL_MODE: str = Field(default="fusion", pattern=r"^(fusion|cascade|vector_only)$")
-    # RRF 融合参数 k：score = Σ 1/(k + rank)，k 越大排名靠后结果差距越小，60 为经验值
-    RRF_K: int = Field(default=60, ge=1, le=1000)
 
     # 日志级别
     LOG_LEVEL: str = Field(default="INFO", pattern=r"^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
@@ -114,7 +104,7 @@ class Settings(BaseSettings):
             raise ValueError("Redis URL 必须以 redis:// 开头")
         return v
 
-    @field_validator("ELASTICSEARCH_URL", "LLM_BASE_URL")
+    @field_validator("LLM_BASE_URL")
     @classmethod
     def validate_http_url(cls, v: str) -> str:
         """验证 HTTP URL 格式"""

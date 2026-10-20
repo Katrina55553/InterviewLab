@@ -2,7 +2,7 @@
 
 基于 FastAPI、LangGraph 和 React 的 AI 面试平台，支持账号登录、简历解析与评分、多轮模拟面试和量化报告，并提供 AI 聊天、管理员模型配置及可选语音与视觉建议。
 
-> 当前运行方式和架构以 [平台运行与架构说明](docs/platform.md) 为准。旧匿名 `/api/sessions`、旧诊断页面和旧 WebSocket 协议已退出应用入口，相关代码仅保留作参考与工具复用。
+运行方式、架构与恢复语义详见 [平台运行与架构说明](docs/platform.md)。
 
 ## 功能与使用流程
 
@@ -16,6 +16,7 @@
 
 - **AI 聊天**：独立聊天会话、附件与 SSE 响应。
 - **管理员配置**：管理 OpenAI-compatible 供应商及版本化 Agent，已有面试保留创建时冻结的配置。
+- **Agent 工具**：查询简历字段、分析代码片段，按场景配置工具权限。
 - **语音与视觉**：可选讯飞实时转写、长文本 TTS 和独立视觉建议。进入面试室请求摄像头权限并显示本机预览，拒绝或关闭摄像头不阻塞面试；视觉建议不参与答题评分。
 - **访问控制**：HttpOnly Cookie 会话、CSRF 校验、资源归属检查与私有文件访问。
 
@@ -30,7 +31,6 @@
 | AI 编排 | LangGraph、OpenAI-compatible API，支持 DeepSeek 等供应商 |
 | 异步任务 | PostgreSQL Outbox、独立 dispatcher、Celery `default` 队列 |
 | 数据 | PostgreSQL 16 保存业务事实；Redis 7 用于协调、通知及 Celery |
-| 检索 | 复用本地知识库与 RAG 工具；Elasticsearch 8 可选 |
 | 部署 | Docker Compose、Nginx |
 
 ```text
@@ -60,14 +60,6 @@ docker compose exec backend python -m app.platform.cli create-admin --username a
 打开 [http://localhost:8000](http://localhost:8000)，注册普通用户或使用初始化的管理员登录。管理员命令会交互式要求输入密码。
 
 Compose 会先由 `migrate` 服务执行 Alembic 迁移，再启动后端与异步进程。正常运行需要 `frontend`、`backend`、`postgres`、`redis`、`celery` 和 `outbox`；只启动 Web 服务无法完成简历准备等异步任务。
-
-可选启用 Elasticsearch：
-
-```powershell
-docker compose --profile rag up -d
-```
-
-未启用 Elasticsearch 时保留本地知识库降级检索。
 
 ## 本地开发
 
@@ -151,7 +143,7 @@ npm run dev
 | `XFYUN_APP_ID` / `XFYUN_API_KEY` / `XFYUN_API_SECRET` | 可选讯飞 ASR / TTS，需分别开通产品 |
 | `MAX_UPLOAD_SIZE_MB` / `ALLOWED_EXTENSIONS` | 上传限制；模板为 10 MB、`pdf,docx,txt` |
 
-修改 `SECRET_KEY` 后需要重新保存供应商 API Key，已有面试中冻结的旧凭据也将不可解密。视觉建议需配置独立 vision 供应商及可选 Agent，配置在面试创建时冻结。
+修改 `SECRET_KEY` 后需要重新保存供应商 API Key，已有面试中使用原密钥加密的冻结凭据也将不可解密。视觉建议需配置独立 vision 供应商及可选 Agent，配置在面试创建时冻结。
 
 ## 接口入口
 
@@ -173,7 +165,7 @@ npm run dev
 {"request_id":"unique-request-id","type":"answer","expected_question_id":"question-id","version":1,"content":"我的回答"}
 ```
 
-MCP 入口为 `python -m app.mcp.server`，通过私有环境变量 `RESUME_AGENT_MCP_TOKEN` 绑定有效登录会话，使用相同的权限与应用服务。当前鉴权与接入约束见 [平台文档](docs/platform.md)；[旧 MCP 文档](MCP_README.md) 中的工具清单与流程仅供历史参考。
+MCP 入口为 `python -m app.mcp.server`，通过私有环境变量 `RESUME_AGENT_MCP_TOKEN` 绑定有效登录会话，使用相同的权限与应用服务。鉴权与接入约束见 [平台文档](docs/platform.md)。
 
 ## 项目结构
 
@@ -181,20 +173,21 @@ MCP 入口为 `python -m app.mcp.server`，通过私有环境变量 `RESUME_AGEN
 ResumeAgent/
 ├── backend/
 │   ├── app/
-│   │   ├── platform/          # 当前业务：认证、简历、面试、聊天、管理、媒体
+│   │   ├── platform/          # 认证、简历、面试、聊天、管理、媒体
 │   │   │   ├── service.py     # 统一面试命令服务
 │   │   │   ├── graph.py       # 每条命令运行一轮 LangGraph
 │   │   │   ├── worker.py      # Outbox dispatcher 与平台 Celery 任务
 │   │   │   └── cli.py         # 迁移、管理员初始化、开发重置
-│   │   ├── core/              # 配置、数据库、LLM、RAG 与工具
+│   │   ├── core/              # 配置、数据库、LLM、公共文档解析与工具
+│   │   │   └── documents.py   # 文本提取、脱敏与演示解析
+│   │   ├── tasks/celery_app.py # Celery 配置与平台任务加载
 │   │   ├── mcp/               # 鉴权 MCP 接入
-│   │   └── main.py            # 当前路由注册与生命周期
+│   │   └── main.py            # 路由注册与生命周期
 │   ├── migrations/            # 平台数据库版本迁移
-│   ├── knowledge/             # 本地题库
 │   └── tests/
 ├── frontend/
-│   ├── src/platform/          # 当前平台页面、状态与样式
-│   ├── src/App.tsx            # 当前应用路由
+│   ├── src/platform/          # 平台页面、状态与样式
+│   ├── src/App.tsx            # 应用路由
 │   ├── dist/                  # 前端构建产物，按仓库约定提交
 │   └── nginx.conf             # 静态资源、API 与 WebSocket 代理
 ├── docs/
@@ -203,7 +196,7 @@ ResumeAgent/
 └── docker-compose.yml
 ```
 
-旧 `frontend/src/pages/`、stores、`backend/app/api/` 与旧 Agent 代码仍保留；新增平台业务应在 `platform/` 下维护。
+前后端业务分别在各自的 `platform/` 目录维护。后端公共解析与脱敏由 `core/documents.py` 提供，模型网关与工具权限由 `platform/runtime.py` 管理。
 
 ## 检查与测试
 
@@ -252,11 +245,10 @@ docker compose down
 python -m app.platform.cli reset-dev --confirm RESET-PLATFORM
 ```
 
-该命令删除并重建 `platform_` 表，保留旧版表及原始文件；执行后需重新创建管理员。
+该命令删除并重建 `platform_` 表，不删除原始文件；执行后需重新创建管理员。
 
 ## 更多文档
 
 - [平台运行与架构](docs/platform.md)
 - [部署与测试记录](docs/verification.md)
-- [旧 MCP 文档（历史参考）](MCP_README.md)
 - [Agent 开发规范](AGENTS.md)

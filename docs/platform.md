@@ -1,6 +1,6 @@
 # Python AI 面试平台
 
-本次扩展保留 FastAPI、LangGraph、React/Zustand、PostgreSQL、Redis。登录后首页 `/` 自动跳转至简历诊断 `/resumes`，不再提供工作台汇总页。简历诊断与模拟面试提供独立入口：`/resumes` 上传简历查看评分和建议；`/interviews/new` 可直接进入面试室，再在室内上传或选择简历，简历在面试对话区收集，准备完成后点击开始即直接出题，最终生成报告。进入面试室即请求摄像头权限，右侧显示本机预览；未授权或手动关闭不阻塞面试。摄像头在简历收集与问答之间保持开启，离开面试室或结束面试后释放。诊断页保留携带简历进入面试室的快捷入口。后端仍复用简历解析、评分和五题生成的准备任务，未选择或未准备好的简历不会创建面试记录。旧匿名 `/api/sessions`、独立诊断页面和旧 WebSocket 协议不再对外注册；原工具、解析及 RAG 模块仍被新平台复用。
+本次扩展保留 FastAPI、LangGraph、React/Zustand、PostgreSQL、Redis。登录后首页 `/` 自动跳转至简历诊断 `/resumes`，不再提供工作台汇总页。简历诊断与模拟面试提供独立入口：`/resumes` 上传简历查看评分和建议；`/interviews/new` 可直接进入面试室，再在室内上传或选择简历，简历在面试对话区收集，准备完成后点击开始即直接出题，最终生成报告。进入面试室即请求摄像头权限，右侧显示本机预览；未授权或手动关闭不阻塞面试。摄像头在简历收集与问答之间保持开启，离开面试室或结束面试后释放。诊断页保留携带简历进入面试室的快捷入口。后端仍复用简历解析、评分和五题生成的准备任务，未选择或未准备好的简历不会创建面试记录。旧页面、状态、匿名 API、Agent 与旧 Celery 任务已移除。公共文本提取、脱敏及演示解析位于 `backend/app/core/documents.py`；保留简历字段查询和代码验证工具，已移除 RAG 与 Elasticsearch。
 
 ## 启动
 
@@ -11,7 +11,7 @@ docker compose up -d --build
 docker compose exec backend python -m app.platform.cli create-admin --username admin
 ```
 
-访问 `http://localhost:8000`。注册账号始终为普通用户，管理员单独初始化。`migrate` 服务运行版本迁移后，后端和 Worker 才会启动。可选 Elasticsearch 用 `docker compose --profile rag up -d` 启用；未启用时保留本地知识库降级。
+访问 `http://localhost:8000`。注册账号始终为普通用户，管理员单独初始化。`migrate` 服务运行版本迁移后，后端和 Worker 才会启动。
 
 本地开发需 PostgreSQL、Redis，以及分别运行以下进程：
 

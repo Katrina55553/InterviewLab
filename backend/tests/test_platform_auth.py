@@ -176,7 +176,7 @@ async def test_admin_configuration_encrypts_keys_and_versions_updates(platform_c
         "scene": "evaluate",
         "provider_id": provider["id"],
         "prompt": "Score the answer",
-        "tools": ["search_knowledge_base"],
+        "tools": ["lookup_resume_field"],
     }
     agent_response = await client.post("/api/admin/agents", json=agent_payload, headers=_csrf(client))
     assert agent_response.status_code == 201, agent_response.text

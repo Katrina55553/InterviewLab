@@ -13,16 +13,16 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - `python -m app.platform.cli create-admin --username admin` 初始化管理员；注册接口始终创建普通用户。Cookie 会话、CSRF 和资源归属检查覆盖 REST、WebSocket 与私有文件。
 - `python -m app.platform.worker` 是必须运行的 outbox dispatcher，Celery 消费 `default` 队列；不能只启动 Web 服务而省略异步进程。
 - PostgreSQL 保存权威快照、真实评估、命令节点进度及事件；Redis 丢失不能改变已有面试事实。恢复读取不能调用 AI，失败重试不能补造评分。
-- 前端新页面与状态在 `frontend/src/platform/`。旧 `src/pages/`、stores 和后端匿名路由保留作参考，但已从应用路由移除。修改新平台不要继续扩展旧协议。
+- 前端页面与状态在 `frontend/src/platform/`。旧页面、stores、匿名 API、Agent 与旧 Celery 任务已删除，不要恢复旧协议。公共解析与脱敏在 `backend/app/core/documents.py`；规则解析仅用于显式演示模式。
 - `PLATFORM_DEMO_MODE=false` 为默认；只有明确开启后才能生成带演示标记的规则结果。无供应商凭据不代表真实服务已验收。
 - 测试：后端 `ruff check .`、`pytest tests -q -p no:cacheprovider`；前端 `npm run lint`、`npm test`、`npm run build`。真实数据库测试通过 `PLATFORM_TEST_DATABASE_URL` 与 `PLATFORM_TEST_REDIS_URL` 指向隔离环境。
-- 以下旧版模块说明用于理解被复用的工具、解析和 RAG，不代表当前页面或 API 流程。
+- RAG、知识库与 Elasticsearch 已移除。现有工具为 `lookup_resume_field` 和 `verify_code_snippet`。
 
 ## 技术栈
 
 | 层 | 技术 |
 |----|------|
-| 前端 | React 18 + TypeScript + Vite + Tailwind CSS 4 + Zustand + React Router v6 + Axios |
+| 前端 | React 19 + TypeScript + Vite + Tailwind CSS 4 + Zustand + React Router v7 |
 | 后端 | FastAPI (Python 3.12) + LangGraph (Agent 编排) + Celery + Redis (异步任务) |
 | LLM | DeepSeek API（OpenAI 兼容格式），支持任意 OpenAI-compatible 第三方 API |
 | 数据库 | PostgreSQL 16 (结构化数据) + Redis 7 (缓存/Celery Broker/WebSocket 消息队列) |
@@ -52,55 +52,19 @@ docker compose logs celery --tail 50
 
 ## 核心架构
 
-### 用户流程
+### 用户流程与 Agent
 
-1. **简历上传** — PDF/Word/TXT，四重校验（扩展名+MIME+魔数+大小），Celery 异步解析
-2. **解析确认** — AI 结构化提取（DeepSeek LLM 或规则降级），用户内联编辑修正
-3. **诊断报告** — AI 识别存疑点（高/中/低优先级），用户勾选面试范围
-4. **模拟面试** — WebSocket 实时对话，LangGraph 状态机驱动动态追问
-5. **评估报告** — 可信度评分 + 逐点反馈 + 改进建议
+登录 → 上传简历 → 异步解析、评分和五题生成 → 创建独立面试 → 逐命令运行 LangGraph → 量化报告。`backend/app/platform/graph.py` 包含准备、面试和报告图，服务层负责命令租约、版本校验、节点进度与事件提交。
 
-### 面试 Agent 架构
-
-核心循环在 `backend/app/agent/nodes/`：
-
-```
-question.py → collect.py → evaluate.py → (条件分支)
-    │                              │
-    │                              ├─ follow_up → 回到 question
-    │                              ├─ next_point → 切换存疑点，回到 question
-    │                              └─ report → report.py 生成报告
-```
-
-**Tool Calling**：`backend/app/core/tools.py` 定义 3 个工具，面试 Agent 可自主决定调用：
-- `search_knowledge_base` — 从 RAG 知识库检索面试题
-- `lookup_resume_field` — 查看简历具体字段
-- `verify_code_snippet` — 验证代码片段正确性
-
-**RAG 知识库**：`backend/knowledge/` 目录下的 JSON 文件，`backend/app/core/rag.py` 提供向量检索 + 关键词降级的混合检索。
-
-**追问防死循环**：单点最多 3 轮（`agent/rules.py`），用户可跳过，连续异常 3 次熔断。
+`backend/app/core/tools.py` 提供简历字段查询与代码验证；新平台通过 `platform/runtime.py` 调用模型。真实模式失败不会自动替换为规则评分，演示模式必须显式开启。
 
 ### WebSocket 面试通信
 
-- 前端：`frontend/src/stores/interviewStore.ts` 管理 WS 连接，支持断线自动重连（指数退避，最多 5 次）和消息队列缓存
-- 后端：`backend/app/api/ws.py` 处理 WS 消息，Redis 缓存未消费消息（`backend/app/core/msg_cache.py`），重连时自动补推
-- 消息协议：客户端发 `{type: "answer|skip|rephrase|start", content}`，服务端推 `{type: "question|status|complete|error"}`
+前端 `frontend/src/platform/Interview.tsx` 与 `hooks.ts` 管理面试命令、快照和事件恢复；后端 `backend/app/platform/api.py` 提供 `/ws/interviews/{id}`。命令携带 `request_id`、`expected_question_id` 和 `version`；PostgreSQL 持久事件为重连提供依据。协议和恢复语义见 `docs/platform.md`。
 
-### LLM 调用层
+### 公共解析与脱敏
 
-`backend/app/core/llm.py` 提供统一接口：
-- `call_llm(system, user)` → 文本响应
-- `call_llm_json(system, user)` → JSON 响应（自动解析）
-- `call_llm_with_tools(system, user, tools)` → 支持 Tool Calling（兼容 DeepSeek 的 DSML 文本格式）
-- 所有 LLM 节点都有降级方案：LLM 不可用时切换到规则/模板
-
-### 敏感信息脱敏
-
-三层脱敏（`backend/app/utils/security/masking.py`）：
-1. LLM prompt 发送前：正则替换手机号/邮箱/身份证
-2. API 响应返回前：mask_phone/mask_email/mask_name
-3. DB 存储前：raw_text 字段脱敏后存储
+`backend/app/core/documents.py` 提供 PDF/DOCX/TXT 文本提取、手机号/邮箱/身份证脱敏及演示解析。简历准备、聊天附件和模型调用共用这些函数，不依赖旧任务或旧 ORM。
 
 ## 关键配置
 
@@ -108,7 +72,7 @@ question.py → collect.py → evaluate.py → (条件分支)
 
 ```
 LLM_BASE_URL=https://api.deepseek.com   # OpenAI 兼容 API 地址
-LLM_API_KEY=sk-xxx                       # API Key（空则用规则降级）
+LLM_API_KEY=sk-xxx                       # API Key（空时真实模式不可用）
 LLM_MODEL=deepseek-chat                  # 模型名称
 DATABASE_URL=postgresql+asyncpg://...     # PostgreSQL 连接
 REDIS_URL=redis://redis:6379/0           # Redis 连接
@@ -118,11 +82,7 @@ REDIS_URL=redis://redis:6379/0           # Redis 连接
 
 ## 前端状态管理
 
-Zustand stores 在 `frontend/src/stores/`：
-- `sessionStore` — 上传/解析轮询
-- `diagnoseStore` — 诊断结果 + 存疑点选择（带轮询）
-- `interviewStore` — WebSocket 面试（连接/重连/消息队列/Tool Calling）
-- `reportStore` — 评估报告
+登录状态在 `frontend/src/platform/auth.ts`；页面数据与事件订阅在 `platform/hooks.ts`，请求在 `platform/api.ts`，其余状态由对应页面管理。
 
 ## 注意事项
 
