@@ -122,10 +122,12 @@ try {
   await page.reload();
   await page.locator('.message-assistant').first().waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: '打开导航菜单', exact: true }).click();
   await page.getByRole('link', { name: '工作台', exact: true }).click();
   await page.getByRole('heading', { name: '开启新的练习' }).waitFor();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   await page.screenshot({ path: resolve(output, '07-mobile-dashboard.png'), fullPage: true });
+  await page.getByRole('button', { name: '打开导航菜单', exact: true }).click();
   await page.getByRole('button', { name: '退出', exact: true }).click();
   await page.getByRole('heading', { name: '欢迎回来' }).waitFor();
   await page.getByLabel('用户名', { exact: true }).fill(username);

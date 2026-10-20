@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react';
 import Markdown from 'react-markdown';
 
-export function Icon({ name, size = 20 }: { name: 'arrow' | 'upload' | 'chat' | 'file' | 'spark' | 'settings' | 'mic' | 'camera' | 'volume' | 'close' | 'check' | 'clock' | 'plus'; size?: number }) {
+export function Icon({ name, size = 20 }: { name: 'arrow' | 'upload' | 'chat' | 'file' | 'spark' | 'settings' | 'mic' | 'camera' | 'volume' | 'close' | 'check' | 'clock' | 'plus' | 'dashboard' | 'menu' | 'logout'; size?: number }) {
   const paths = {
+    dashboard: 'M3 3h7v7H3V3Zm11 0h7v7h-7V3ZM3 14h7v7H3v-7Zm11 0h7v7h-7v-7Z',
+    menu: 'M4 6h16M4 12h16M4 18h16', logout: 'M9 4H4v16h5m6-12 4 4-4 4m-6-4h10',
     arrow: 'M5 12h14m-6-6 6 6-6 6', upload: 'M12 16V4m-5 5 5-5 5 5M4 16v4h16v-4',
     chat: 'M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2v-10A9.5 9.5 0 0 1 12 2a9 9 0 0 1 9 9.5Z',
     file: 'M14 2H5v20h14V7l-5-5Zm0 0v6h5M8 12h8m-8 4h6', spark: 'm12 2 2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4L12 2Z',

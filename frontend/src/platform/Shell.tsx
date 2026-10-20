@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from './auth';
 import { errorMessage } from './api';
 import { Icon, Loading, Notice } from './ui';
+import type { User } from './types';
 
 export function AuthPage() {
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -36,10 +37,71 @@ export function SessionGate() {
   return user ? <Shell /> : <Navigate to="/login" replace />;
 }
 
+function SidebarContent({ user, busy, onLeave, onNavigate, onClose }: {
+  user: User | null;
+  busy: boolean;
+  onLeave: () => void;
+  onNavigate?: () => void;
+  onClose?: () => void;
+}) {
+  return <div className="sidebar-content">
+    <div className="sidebar-brand-row">
+      <NavLink className="brand sidebar-brand" to="/" onClick={onNavigate}>
+        <span className="brand-icon"><Icon name="spark" /></span>
+        <span>面试研习室<small>AI MEETING</small></span>
+      </NavLink>
+      {onClose && <button type="button" className="sidebar-icon-button" aria-label="关闭导航菜单" onClick={onClose}><Icon name="close" /></button>}
+    </div>
+    <nav className="sidebar-nav" aria-label="主导航">
+      <span className="sidebar-section-label">我的研习室</span>
+      <NavLink end to="/" onClick={onNavigate}><Icon name="dashboard" size={19} /><span>工作台</span></NavLink>
+      <NavLink to="/history" onClick={onNavigate}><Icon name="clock" size={19} /><span>面试记录</span></NavLink>
+      <NavLink to="/chat" onClick={onNavigate}><Icon name="chat" size={19} /><span>AI 对话</span></NavLink>
+      {user?.role === 'admin' && <><span className="sidebar-section-label sidebar-admin-label">管理</span><NavLink to="/admin" onClick={onNavigate}><Icon name="settings" size={19} /><span>管理设置</span></NavLink></>}
+    </nav>
+    <div className="sidebar-bottom">
+      <div className="sidebar-note"><Icon name="spark" size={17} /><p>认真准备，自信表达。<span>每一次练习，都更进一步。</span></p></div>
+      <div className="profile">
+        <span className="avatar">{user?.username.slice(0, 1).toUpperCase()}</span>
+        <div className="profile-details"><strong title={user?.username}>{user?.username}</strong><span>{user?.role === 'admin' ? '管理员' : '个人账号'}</span></div>
+        <button type="button" className="sidebar-logout" onClick={onLeave} disabled={busy}><Icon name="logout" size={17} /><span>退出</span></button>
+      </div>
+    </div>
+  </div>;
+}
+
 function Shell() {
   const { user, logout } = useAuth();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menu = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const closeOnWideScreen = () => { if (window.innerWidth > 850 && menu.current?.open) menu.current.close() };
+    window.addEventListener('resize', closeOnWideScreen);
+    return () => window.removeEventListener('resize', closeOnWideScreen);
+  }, []);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = overflow };
+  }, [menuOpen]);
+  const closeMenu = () => menu.current?.close();
   const leave = async () => { setBusy(true); try { await logout() } catch (err) { setError(errorMessage(err)) } finally { setBusy(false) } };
-  return <div className="platform bg-noise"><header className="topbar"><NavLink className="brand" to="/"><span className="brand-icon"><Icon name="spark" /></span>面试研习室<small>AI MEETING</small></NavLink><nav aria-label="主导航"><NavLink end to="/">工作台</NavLink><NavLink to="/history">面试记录</NavLink><NavLink to="/chat">AI 对话</NavLink>{user?.role === 'admin' && <NavLink to="/admin">管理设置</NavLink>}</nav><div className="profile"><span className="avatar">{user?.username.slice(0, 1).toUpperCase()}</span><span>{user?.username}</span><button className="text-button muted" onClick={() => void leave()} disabled={busy}>退出</button></div></header>{error && <div className="page"><Notice>{error}</Notice></div>}<main className="page"><Outlet /></main><footer className="footer"><span>面试研习室</span><span>认真准备，自信表达。</span><span>AI 建议仅供练习参考</span></footer></div>;
+  const sidebarProps = { user, busy, onLeave: () => { closeMenu(); void leave() } };
+  return <div className="platform bg-noise">
+    <aside className="app-sidebar" aria-label="研习室侧边栏"><SidebarContent {...sidebarProps} /></aside>
+    <header className="mobile-topbar">
+      <NavLink className="brand" to="/"><span className="brand-icon"><Icon name="spark" /></span>面试研习室</NavLink>
+      <button type="button" className="sidebar-icon-button" aria-label="打开导航菜单" aria-controls="mobile-navigation" aria-expanded={menuOpen} onClick={() => { menu.current?.showModal(); setMenuOpen(true) }}><Icon name="menu" /></button>
+    </header>
+    <dialog ref={menu} id="mobile-navigation" className="sidebar-dialog" aria-label="导航菜单" onClose={() => setMenuOpen(false)} onClick={event => { if (event.target === event.currentTarget) closeMenu() }}>
+      <SidebarContent {...sidebarProps} onNavigate={closeMenu} onClose={closeMenu} />
+    </dialog>
+    <div className="platform-content">
+      <main className="page">{error && <Notice>{error}</Notice>}<Outlet /></main>
+      <footer className="footer"><span>面试研习室</span><span>认真准备，自信表达。</span><span>AI 建议仅供练习参考</span></footer>
+    </div>
+  </div>;
 }
