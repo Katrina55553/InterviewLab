@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # 创建异步引擎
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=not settings.is_production,  # 生产环境关闭 SQL 日志
+    echo=False,  # SQL parameters may contain private resume/chat content.
     pool_size=20,
     max_overflow=10,
     pool_pre_ping=True,  # 自动检测断开的连接
@@ -50,25 +50,14 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db() -> None:
-    """初始化数据库（创建表）
-    带容错处理：数据库不可用时记录警告但不阻断服务启动。
-    """
-    import asyncio
+    """Validate migration state; application startup never mutates database schema."""
+    from sqlalchemy import text
 
-    for attempt in range(5):
-        try:
-            async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
-            logger.info("数据库初始化完成")
-            return
-        except Exception as e:
-            wait = (attempt + 1) * 3
-            logger.warning(
-                f"数据库初始化失败 (尝试 {attempt + 1}/5): {e}，{wait}s 后重试"
-            )
-            await asyncio.sleep(wait)
-
-    logger.error("数据库初始化多次失败，服务继续运行但部分功能不可用")
+    async with engine.connect() as conn:
+        version = await conn.scalar(text("SELECT version_num FROM platform_alembic_version"))
+        if version != "20261015_0001":
+            raise RuntimeError("数据库尚未迁移，请先运行 python -m app.platform.cli migrate")
+    logger.info("平台数据库迁移检查通过")
 
 
 async def close_db() -> None:

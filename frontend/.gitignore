@@ -8,6 +8,7 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+test-results/
 # dist  # 提交到 Git，Docker 直接 serve 静态文件
 dist-ssr
 *.local

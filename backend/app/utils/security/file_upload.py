@@ -124,13 +124,10 @@ async def _check_magic_number(file: UploadFile) -> str | None:
     header = await file.read(8)
     await file.seek(0)  # 重置文件指针
 
-    # 检查是否匹配已知的文件签名
-    for ext, signatures in FILE_SIGNATURES.items():
-        if ext == "txt":
-            continue
-        for sig in signatures:
-            if header.startswith(sig):
-                return None
+    # Validate against the claimed extension, not a signature of any allowed format.
+    extension = (file.filename or "").rsplit(".", 1)[-1].lower()
+    if any(header.startswith(signature) for signature in FILE_SIGNATURES.get(extension, [])):
+        return None
 
     return "文件内容与扩展名不匹配（魔数校验失败）"
 

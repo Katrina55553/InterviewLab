@@ -26,12 +26,12 @@ services:
     env_file:
       - ./backend/.env
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      elasticsearch:
-        condition: service_started
     healthcheck:
       test:
         - CMD-SHELL
@@ -53,12 +53,12 @@ services:
     env_file:
       - ./backend/.env
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      elasticsearch:
-        condition: service_started
     healthcheck:
       test:
         - CMD-SHELL
@@ -69,8 +69,36 @@ services:
       start_period: 60s
     restart: unless-stopped
 
+  # Explicit, versioned schema upgrade before web/worker processes start.
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: python -m app.platform.cli migrate
+    env_file:
+      - ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  outbox:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: python -m app.platform.worker
+    env_file:
+      - ./backend/.env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   # Elasticsearch（全文检索）
   elasticsearch:
+    profiles: ["rag"]
     image: elasticsearch:8.11.0
     environment:
       - discovery.type=single-node

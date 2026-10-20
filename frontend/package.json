@@ -1,14 +1,18 @@
 {
-  "name": "frontend",
+  "name": "ai-meeting-frontend",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --pretty false",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:platform": "vitest run src/platform",
+    "test:e2e": "node tests/platform.e2e.mjs",
+    "test:e2e:admin": "node tests/admin.e2e.mjs",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },

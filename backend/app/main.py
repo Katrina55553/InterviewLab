@@ -9,10 +9,10 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import diagnose, interview, report, sessions, ws
 from app.core.config import settings
 from app.core.database import close_db, init_db
 from app.core.redis import close_redis, init_redis
+from app.platform import admin, api, auth, chat, media
 
 
 @asynccontextmanager
@@ -29,9 +29,9 @@ async def lifespan(app: FastAPI):
 
 # 创建 FastAPI 应用
 app = FastAPI(
-    title="ResumeAgent API",
-    description="AI 简历诊断 + 模拟面试 Agent",
-    version="0.1.0",
+    title="ResumeAgent Interview Platform API",
+    description="简历评分、LangGraph 面试、AI 对话与语音平台",
+    version="1.0.0",
     lifespan=lifespan,
 )
 
@@ -44,12 +44,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 注册路由
-app.include_router(sessions.router, prefix="/api", tags=["sessions"])
-app.include_router(diagnose.router, prefix="/api", tags=["diagnose"])
-app.include_router(interview.router, prefix="/api", tags=["interview"])
-app.include_router(report.router, prefix="/api", tags=["report"])
-app.include_router(ws.router, tags=["websocket"])
+app.add_middleware(auth.AuthCSRFMiddleware)
+
+# Only authenticated platform adapters are exposed; legacy anonymous routes are retired.
+app.include_router(auth.router, prefix="/api")
+app.include_router(admin.router, prefix="/api")
+app.include_router(api.router, prefix="/api")
+app.include_router(chat.router, prefix="/api")
+app.include_router(media.router, prefix="/api")
+app.include_router(api.ws_router)
+app.include_router(media.ws_router)
 
 
 # 统一异常处理
@@ -78,4 +82,4 @@ async def value_error_handler(request: Request, exc: ValueError):
 @app.get("/health")
 async def health_check():
     """健康检查端点"""
-    return {"status": "ok", "version": "0.1.0"}
+    return {"status": "ok", "version": "1.0.0"}

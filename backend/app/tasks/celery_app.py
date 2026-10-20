@@ -16,6 +16,7 @@ celery_app = Celery(
 
 # Celery 配置
 celery_app.conf.update(
+    imports=("app.platform.worker",),
     # 序列化方式
     task_serializer="json",
     accept_content=["json"],

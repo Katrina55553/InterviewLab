@@ -4,7 +4,19 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## 项目概述
 
-**简历智诊 Agent** — AI 驱动的简历诊断与模拟面试系统。用户上传简历 → AI 结构化解析 → 诊断存疑点 → 多轮模拟面试（WebSocket 实时对话）→ 量化评估报告。
+**AI 面试平台** — 用户登录 → 上传简历 → 解析、评分与五题生成 → LangGraph 多轮模拟面试 → 量化报告；另含 SSE 聊天、管理员模型与 Agent 配置、可选讯飞 ASR/TTS 和视觉建议。当前运行与架构文档以 `docs/platform.md` 为准。
+
+## 当前平台入口
+
+- 后端新业务集中在 `backend/app/platform/`；`api.py`、`chat.py`、`media.py` 为鉴权适配器，`service.py` 为统一面试命令服务，`graph.py` 为每次命令运行一轮的 LangGraph。
+- `models.py` 与 `media_models.py` 的 `platform_` 表由 Alembic 管理；先运行 `python -m app.platform.cli migrate`。应用启动只验证迁移，不自动建表。开发重建需显式 `reset-dev --confirm RESET-PLATFORM`。
+- `python -m app.platform.cli create-admin --username admin` 初始化管理员；注册接口始终创建普通用户。Cookie 会话、CSRF 和资源归属检查覆盖 REST、WebSocket 与私有文件。
+- `python -m app.platform.worker` 是必须运行的 outbox dispatcher，Celery 消费 `default` 队列；不能只启动 Web 服务而省略异步进程。
+- PostgreSQL 保存权威快照、真实评估、命令节点进度及事件；Redis 丢失不能改变已有面试事实。恢复读取不能调用 AI，失败重试不能补造评分。
+- 前端新页面与状态在 `frontend/src/platform/`。旧 `src/pages/`、stores 和后端匿名路由保留作参考，但已从应用路由移除。修改新平台不要继续扩展旧协议。
+- `PLATFORM_DEMO_MODE=false` 为默认；只有明确开启后才能生成带演示标记的规则结果。无供应商凭据不代表真实服务已验收。
+- 测试：后端 `ruff check .`、`pytest tests -q -p no:cacheprovider`；前端 `npm run lint`、`npm test`、`npm run build`。真实数据库测试通过 `PLATFORM_TEST_DATABASE_URL` 与 `PLATFORM_TEST_REDIS_URL` 指向隔离环境。
+- 以下旧版模块说明用于理解被复用的工具、解析和 RAG，不代表当前页面或 API 流程。
 
 ## 技术栈
 

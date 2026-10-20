@@ -1,0 +1,80 @@
+"""Explicit platform maintenance: migrate, bootstrap admin, or reset development data."""
+
+import argparse
+import asyncio
+import getpass
+from pathlib import Path
+
+from alembic import command
+from alembic.config import Config
+from pydantic import ValidationError
+from sqlalchemy import Column, MetaData, String, Table, select
+from sqlalchemy.exc import IntegrityError
+
+from app.core.config import settings
+from app.core.database import Base, async_session_maker, engine
+from app.platform.auth import Credentials, hash_password
+from app.platform.models import User
+
+
+def migrate() -> None:
+    command.upgrade(Config(str(Path(__file__).resolve().parents[2] / "alembic.ini")), "head")
+
+
+async def create_admin(username: str, password: str) -> None:
+    credentials = Credentials(username=username, password=password)
+    encoded = await asyncio.to_thread(hash_password, credentials.password)
+    async with async_session_maker() as db:
+        existing = (await db.execute(select(User).where(User.username == credentials.username))).scalar_one_or_none()
+        if existing is not None:
+            raise ValueError("用户名已存在；为避免意外修改账号，管理员创建已取消")
+        db.add(User(username=credentials.username, password_hash=encoded, role="admin"))
+        try:
+            await db.commit()
+        except IntegrityError as exc:
+            raise ValueError("用户名已存在") from exc
+    print(f"管理员 {credentials.username} 已创建")
+
+
+async def reset_dev(confirmation: str | None) -> None:
+    if settings.ENVIRONMENT != "development":
+        raise ValueError("reset-dev 只允许在 ENVIRONMENT=development 时执行")
+    if confirmation != "RESET-PLATFORM":
+        raise ValueError("请显式指定 --confirm RESET-PLATFORM；此命令删除新平台数据，保留旧版表")
+    # Import all platform mappings before sorting foreign-key dependencies.
+    from app.platform import media_models, models  # noqa: F401
+
+    platform_tables = [table for table in Base.metadata.sorted_tables if table.name.startswith("platform_")]
+    version = Table("platform_alembic_version", MetaData(), Column("version_num", String(32), primary_key=True))
+    async with engine.begin() as connection:
+        await connection.run_sync(lambda sync: Base.metadata.drop_all(sync, tables=platform_tables))
+        await connection.run_sync(lambda sync: version.drop(sync, checkfirst=True))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="ResumeAgent 新平台维护工具")
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("migrate", help="升级新平台数据库；不修改旧版表")
+    admin = commands.add_parser("create-admin", help="交互输入密码，创建管理员")
+    admin.add_argument("--username", required=True)
+    reset = commands.add_parser("reset-dev", help="删除并重建 platform_ 表；仅限开发环境")
+    reset.add_argument("--confirm", choices=["RESET-PLATFORM"])
+    args = parser.parse_args()
+    try:
+        if args.command == "migrate":
+            migrate()
+        elif args.command == "create-admin":
+            password = getpass.getpass("管理员密码（至少 8 位）: ")
+            if password != getpass.getpass("再次输入密码: "):
+                raise ValueError("两次密码不一致")
+            asyncio.run(create_admin(args.username, password))
+        else:
+            asyncio.run(reset_dev(args.confirm))
+            migrate()
+            print("新平台开发数据已重置；旧版表未改动")
+    except (ValueError, ValidationError) as exc:
+        parser.error(str(exc))
+
+
+if __name__ == "__main__":
+    main()

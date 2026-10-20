@@ -35,6 +35,9 @@ jobs:
       - name: Typecheck
         run: npx tsc -b --noEmit
 
+      - name: Unit tests
+        run: npm test
+
       - name: Build
         run: npm run build
 
@@ -71,6 +74,8 @@ jobs:
     env:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/resume_agent_test
       REDIS_URL: redis://localhost:6379/0
+      PLATFORM_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/resume_agent_test
+      PLATFORM_TEST_REDIS_URL: redis://localhost:6379/15
       SECRET_KEY: test-secret-key-for-ci
       LLM_API_KEY: sk-test-placeholder
       LLM_BASE_URL: https://api.openai.com/v1
@@ -91,7 +96,7 @@ jobs:
         run: ruff check . --output-format=github
 
       - name: Test (pytest)
-        run: pytest tests/ -v --tb=short
+        run: pytest tests/ -v --tb=short -p no:cacheprovider
 
   # ── Docker 镜像构建（仅验证，不推送）─────────────────────
   docker:

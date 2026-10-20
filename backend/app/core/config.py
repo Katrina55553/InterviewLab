@@ -33,6 +33,25 @@ class Settings(BaseSettings):
     # 安全配置
     SECRET_KEY: str = Field(default="change-me-in-production", min_length=16)
 
+    # 新平台：默认调用真实服务；演示降级需要显式打开。
+    PLATFORM_DEMO_MODE: bool = False
+    AUTH_SESSION_HOURS: int = Field(default=168, ge=1, le=720)
+    AUTH_COOKIE_SECURE: bool = False
+    AUTH_RATE_LIMIT_WINDOW_SECONDS: int = Field(default=900, ge=60, le=86400)
+    AUTH_MAX_ATTEMPTS: int = Field(default=10, ge=1, le=100)
+    AUTH_IP_MAX_ATTEMPTS: int = Field(default=60, ge=1, le=1000)
+    AI_TIMEOUT_SECONDS: int = Field(default=90, ge=1, le=600)
+    AI_MAX_CONCURRENCY: int = Field(default=4, ge=1, le=64)
+    AI_COMMAND_LEASE_SECONDS: int = Field(default=150, ge=10, le=1800)
+
+    # 讯飞媒体能力；空凭据会明确禁用对应能力。
+    XFYUN_APP_ID: str = ""
+    XFYUN_API_KEY: str = ""
+    XFYUN_API_SECRET: str = ""
+    XFYUN_ASR_URL: str = "wss://office-api-ast-dx.iflyaisol.com/ast/communicate/v1"
+    XFYUN_TTS_VOICE: str = "x4_mingge"
+    MEDIA_STORAGE_DIR: str = "uploads/media"
+
     # CORS 配置
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
 
