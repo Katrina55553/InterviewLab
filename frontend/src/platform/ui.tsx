@@ -1,8 +1,16 @@
 import type { ReactNode } from 'react';
 import Markdown from 'react-markdown';
 
-export function Icon({ name, size = 20 }: { name: 'arrow' | 'upload' | 'chat' | 'file' | 'spark' | 'settings' | 'mic' | 'camera' | 'volume' | 'close' | 'check' | 'clock' | 'plus' | 'menu' | 'logout'; size?: number }) {
+export function Icon({ name, size = 20 }: { name: 'arrow' | 'upload' | 'chat' | 'file' | 'spark' | 'settings' | 'mic' | 'camera' | 'volume' | 'close' | 'check' | 'clock' | 'plus' | 'menu' | 'sidebar' | 'logout' | 'clipboard' | 'scan' | 'briefcase' | 'headphones' | 'chevron' | 'star' | 'fork'; size?: number }) {
   const paths = {
+    star: 'm12 3 2.78 5.63L21 9.54l-4.5 4.39 1.06 6.2L12 17.2l-5.56 2.93 1.06-6.2L3 9.54l6.22-.91L12 3Z',
+    fork: 'M8 7v10m8-10v3a3 3 0 0 1-3 3H8M8 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm8 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM8 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z',
+    sidebar: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm4 0v18',
+    clipboard: 'M9 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-3M9 2h6v4H9V2Zm-1 9h.01M12 11h4m-8 5h.01M12 16h4',
+    scan: 'M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3M8 7h8M8 12h8m-8 5h5',
+    briefcase: 'M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 7h18v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Zm0 5a20 20 0 0 0 18 0M10 12v3h4v-3',
+    headphones: 'M4 14v-3a8 8 0 0 1 16 0v3M4 13h3v8H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2Zm16 0h-3v8h3a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2Z',
+    chevron: 'm9 5 7 7-7 7',
     menu: 'M4 6h16M4 12h16M4 18h16', logout: 'M9 4H4v16h5m6-12 4 4-4 4m-6-4h10',
     arrow: 'M5 12h14m-6-6 6 6-6 6', upload: 'M12 16V4m-5 5 5-5 5 5M4 16v4h16v-4',
     chat: 'M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2v-10A9.5 9.5 0 0 1 12 2a9 9 0 0 1 9 9.5Z',

@@ -7,8 +7,8 @@
    ============================================================ */
 
 @theme {
-  --font-display: "Fraunces", Georgia, serif;
-  --font-sans: "Plus Jakarta Sans", system-ui, sans-serif;
+  --font-display: var(--font-sans);
+  --font-sans: "Plus Jakarta Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
   --color-paper: #FAF8F5;
   --color-paper-dark: #F5F2EC;
   --color-ink: #1C1917;
@@ -28,12 +28,29 @@
   --color-priority-low-bg: #ECFDF5;
 }
 
+/* Compact workspace scale: captions 11–12px, controls 13px, body 14px, titles 20–24px. */
+:root {
+  --type-caption: 0.6875rem;
+  --type-small: 0.75rem;
+  --type-label: 0.8125rem;
+  --type-body: 0.875rem;
+  --type-subtitle: 1rem;
+  --type-section: 1.125rem;
+  --type-title-small: 1.25rem;
+  --type-title: 1.5rem;
+  --type-hero: 1.875rem;
+  --type-score: 3.5rem;
+  --type-score-small: 3rem;
+}
+
 /* ============================================================
    基础样式
    ============================================================ */
 
 html {
   font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.6;
   background-color: var(--color-paper);
   color: var(--color-ink);
   -webkit-font-smoothing: antialiased;
@@ -59,7 +76,7 @@ body {
   z-index: 0;
 }
 
-/* 衬线展示字体 */
+/* 标题字体 */
 .font-display {
   font-family: var(--font-display);
   font-optical-sizing: auto;

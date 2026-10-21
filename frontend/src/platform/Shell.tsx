@@ -1,10 +1,28 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Link, matchPath, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './auth';
 import { errorMessage } from './api';
 import { Icon, Loading, Notice } from './ui';
 import type { User } from './types';
+import { RepositoryBadge } from './RepositoryBadge';
+
+const sidebarStorageKey = 'meeting:sidebar-collapsed';
+
+const navigationGroups = [
+  { label: '工作空间', items: [
+    { to: '/my-resumes', label: '我的简历', icon: 'file', paths: ['/my-resumes'] },
+    { to: '/history', label: '面试记录', icon: 'clipboard', paths: ['/history', '/interviews/:id/report'] },
+  ] },
+  { label: '工具与练习', items: [
+    { to: '/resumes', label: '简历诊断', icon: 'scan', paths: ['/resumes', '/resumes/:id'] },
+    { to: '/chat', label: 'JD 分析', icon: 'briefcase', paths: ['/chat', '/chat/:id'] },
+    { to: '/interviews/new', label: '模拟面试', icon: 'headphones', paths: ['/interviews/:id'] },
+  ] },
+  { label: '更多', adminOnly: true, items: [
+    { to: '/admin', label: '管理设置', icon: 'settings', paths: ['/admin'] },
+  ] },
+] as const;
 
 export function AuthPage() {
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -37,32 +55,32 @@ export function SessionGate() {
   return user ? <Shell /> : <Navigate to="/login" replace />;
 }
 
-function SidebarContent({ user, busy, onLeave, onNavigate, onClose }: {
+function SidebarContent({ user, busy, activePath, onLeave, onNavigate, onClose }: {
   user: User | null;
   busy: boolean;
+  activePath?: string;
   onLeave: () => void;
   onNavigate?: () => void;
   onClose?: () => void;
 }) {
   return <div className="sidebar-content">
     <div className="sidebar-brand-row">
-      <NavLink className="brand sidebar-brand" to="/" onClick={onNavigate}>
-        <span className="brand-icon"><Icon name="spark" /></span>
+      <Link className="brand sidebar-brand" to="/" onClick={onNavigate}>
+        <span className="brand-icon"><Icon name="spark" size={26} /></span>
         <span>面试研习室<small>AI MEETING</small></span>
-      </NavLink>
+      </Link>
       {onClose && <button type="button" className="sidebar-icon-button" aria-label="关闭导航菜单" onClick={onClose}><Icon name="close" /></button>}
     </div>
     <nav className="sidebar-nav" aria-label="主导航">
-      <span className="sidebar-section-label">我的研习室</span>
-      <NavLink to="/my-resumes" onClick={onNavigate}><Icon name="file" size={19} /><span>我的简历</span></NavLink>
-      <NavLink to="/resumes" onClick={onNavigate}><Icon name="file" size={19} /><span>简历诊断</span></NavLink>
-      <NavLink to="/chat" onClick={onNavigate}><Icon name="chat" size={19} /><span>JD分析</span></NavLink>
-      <NavLink to="/interviews/new" onClick={onNavigate}><Icon name="chat" size={19} /><span>模拟面试</span></NavLink>
-      <NavLink to="/history" onClick={onNavigate}><Icon name="clock" size={19} /><span>面试记录</span></NavLink>
-      {user?.role === 'admin' && <><span className="sidebar-section-label sidebar-admin-label">管理</span><NavLink to="/admin" onClick={onNavigate}><Icon name="settings" size={19} /><span>管理设置</span></NavLink></>}
+      {navigationGroups.filter(group => !('adminOnly' in group) || user?.role === 'admin').map(group => <div className="sidebar-nav-group" role="group" aria-label={group.label} key={group.label}>
+        <p className="sidebar-section-label">{group.label}</p>
+        {group.items.map(item => <Link key={item.to} to={item.to} className={activePath === item.to ? 'active' : undefined} aria-current={activePath === item.to ? 'page' : undefined} onClick={onNavigate}>
+          <Icon name={item.icon} size={22} /><span>{item.label}</span>
+          {activePath === item.to && <span className="sidebar-active-dot" aria-hidden="true" />}
+        </Link>)}
+      </div>)}
     </nav>
     <div className="sidebar-bottom">
-      <div className="sidebar-note"><Icon name="spark" size={17} /><p>认真准备，自信表达。<span>每一次练习，都更进一步。</span></p></div>
       <div className="profile">
         <span className="avatar">{user?.username.slice(0, 1).toUpperCase()}</span>
         <div className="profile-details"><strong title={user?.username}>{user?.username}</strong><span>{user?.role === 'admin' ? '管理员' : '个人账号'}</span></div>
@@ -76,10 +94,24 @@ function Shell() {
   const { pathname } = useLocation();
   const isChat = pathname === '/chat' || pathname.startsWith('/chat/');
   const { user, logout } = useAuth();
+  const groups = navigationGroups.filter(group => !('adminOnly' in group) || user?.role === 'admin');
+  const currentGroup = groups.find(group => group.items.some(item => item.paths.some(path => matchPath(path, pathname))));
+  const currentItem = currentGroup?.items.find(item => item.paths.some(path => matchPath(path, pathname)));
+  const detail = matchPath('/resumes/:id', pathname) ? '诊断结果'
+    : matchPath('/interviews/:id/report', pathname) ? '面试报告'
+    : pathname !== '/interviews/new' && matchPath('/interviews/:id', pathname) ? '面试详情' : null;
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem(sidebarStorageKey) === 'true' }
+    catch { return false }
+  });
   const menu = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    try { localStorage.setItem(sidebarStorageKey, String(sidebarCollapsed)) }
+    catch { /* Navigation still works when browser storage is unavailable. */ }
+  }, [sidebarCollapsed]);
   useEffect(() => {
     const closeOnWideScreen = () => { if (window.innerWidth > 850 && menu.current?.open) menu.current.close() };
     window.addEventListener('resize', closeOnWideScreen);
@@ -93,17 +125,23 @@ function Shell() {
   }, [menuOpen]);
   const closeMenu = () => menu.current?.close();
   const leave = async () => { setBusy(true); try { await logout() } catch (err) { setError(errorMessage(err)) } finally { setBusy(false) } };
-  const sidebarProps = { user, busy, onLeave: () => { closeMenu(); void leave() } };
-  return <div className="platform bg-noise">
-    <aside className="app-sidebar" aria-label="研习室侧边栏"><SidebarContent {...sidebarProps} /></aside>
-    <header className="mobile-topbar">
-      <NavLink className="brand" to="/"><span className="brand-icon"><Icon name="spark" /></span>面试研习室</NavLink>
-      <button type="button" className="sidebar-icon-button" aria-label="打开导航菜单" aria-controls="mobile-navigation" aria-expanded={menuOpen} onClick={() => { menu.current?.showModal(); setMenuOpen(true) }}><Icon name="menu" /></button>
-    </header>
+  const sidebarProps = { user, busy, activePath: currentItem?.to, onLeave: () => { closeMenu(); void leave() } };
+  return <div className={`platform bg-noise${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
+    <aside id="app-navigation" className="app-sidebar" aria-label="研习室侧边栏" aria-hidden={sidebarCollapsed} inert={sidebarCollapsed}><SidebarContent {...sidebarProps} /></aside>
     <dialog ref={menu} id="mobile-navigation" className="sidebar-dialog" aria-label="导航菜单" onClose={() => setMenuOpen(false)} onClick={event => { if (event.target === event.currentTarget) closeMenu() }}>
       <SidebarContent {...sidebarProps} onNavigate={closeMenu} onClose={closeMenu} />
     </dialog>
     <div className={`platform-content${isChat ? ' chat-workspace' : ''}`}>
+      <header className="workspace-topbar">
+        <button type="button" className="sidebar-icon-button workspace-sidebar-toggle" aria-label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'} title={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'} aria-controls="app-navigation" aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed(collapsed => !collapsed)}><Icon name="sidebar" /></button>
+        <button type="button" className="sidebar-icon-button workspace-menu-button" aria-label="打开导航菜单" aria-controls="mobile-navigation" aria-expanded={menuOpen} onClick={() => { menu.current?.showModal(); setMenuOpen(true) }}><Icon name="menu" /></button>
+        {currentGroup && currentItem && <nav className="workspace-breadcrumb" aria-label="面包屑导航"><ol>
+          <li>{currentGroup.label}</li>
+          <li><Icon name="chevron" size={16} />{detail ? <Link to={currentItem.to}>{currentItem.label}</Link> : <span aria-current="page">{currentItem.label}</span>}</li>
+          {detail && <li><Icon name="chevron" size={16} /><span aria-current="page">{detail}</span></li>}
+        </ol></nav>}
+        <RepositoryBadge />
+      </header>
       <main className={`page${isChat ? ' page-chat' : ''}`}>{error && <Notice>{error}</Notice>}<Outlet /></main>
       <footer className="footer"><span>面试研习室</span><span>认真准备，自信表达。</span><span>AI 建议仅供练习参考</span></footer>
     </div>
