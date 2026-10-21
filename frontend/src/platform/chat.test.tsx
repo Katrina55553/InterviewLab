@@ -14,6 +14,7 @@ it('keeps exactly one persisted partial reply after stopping a stream and refres
   const json = (data: unknown) => new Response(JSON.stringify(data), { status: 200 });
   vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
     if (url === '/api/auth/me') return json({ id: 'u1', username: 'test', role: 'user' });
+    if (url === '/api/repository/stats') return json({ stars: 4, forks: 0, source: 'fallback', updated_at: null });
     if (url === '/api/chats') return json([{ id: 'chat-1', title: '测试对话' }]);
     if (url === '/api/agents') return json([]);
     if (url === '/api/chats/chat-1') return json({ id: 'chat-1', title: '测试对话', messages: stopped ? [{ id: 'm1', role: 'user', content: '问题' }, { id: 'm2', role: 'assistant', content: '已保存的部分回答' }] : [] });

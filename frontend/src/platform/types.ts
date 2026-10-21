@@ -1,4 +1,5 @@
 export interface User { id: string; username: string; role: string }
+export interface RepositoryStats { stars: number; forks: number; updated_at: string | null; source: 'github' | 'fallback' }
 export interface Question { id: string; text: string; category?: string; main_index?: number; is_followup?: boolean }
 export interface Resume {
   id: string; filename: string; status: 'queued' | 'processing' | 'ready' | 'failed';

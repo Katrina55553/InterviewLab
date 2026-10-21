@@ -19,4 +19,6 @@ def test_only_platform_tasks_are_registered():
     from app.tasks.celery_app import celery_app
 
     celery_app.loader.import_default_modules()
-    assert {name for name in celery_app.tasks if name.startswith("app.")} == {"app.platform.worker.execute_job"}
+    assert {name for name in celery_app.tasks if name.startswith("app.")} == {
+        "app.platform.worker.execute_job", "app.tasks.repository_stats.refresh_repository_stats",
+    }

@@ -3,11 +3,17 @@
 配置 Celery 任务队列。
 """
 
+import logging
+
 from celery import Celery
+from celery.schedules import crontab
+from celery.signals import beat_init
 
 from app.core.config import settings
 
 settings.validate_runtime()
+logger = logging.getLogger(__name__)
+REPOSITORY_STATS_TASK = "app.tasks.repository_stats.refresh_repository_stats"
 
 # 创建 Celery 实例
 celery_app = Celery(
@@ -18,7 +24,14 @@ celery_app = Celery(
 
 # Celery 配置
 celery_app.conf.update(
-    imports=("app.platform.worker",),
+    imports=("app.platform.worker", "app.tasks.repository_stats"),
+    beat_schedule={
+        "refresh-repository-stats-daily": {
+            "task": REPOSITORY_STATS_TASK,
+            "schedule": crontab(hour=3, minute=0),
+            "options": {"queue": "default"},
+        },
+    },
     # 序列化方式
     task_serializer="json",
     accept_content=["json"],
@@ -49,3 +62,12 @@ celery_app.conf.update(
 from app.platform.operations.worker_health import install_signals  # noqa: E402
 
 install_signals()
+
+
+@beat_init.connect(weak=False)
+def initialize_repository_stats(sender, **kwargs):
+    try:
+        sender.app.send_task(REPOSITORY_STATS_TASK, kwargs={"only_if_missing": True},
+                             queue="default", retry=False)
+    except Exception:
+        logger.warning("repository_stats_initialization_failed")

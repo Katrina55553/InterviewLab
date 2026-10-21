@@ -47,6 +47,7 @@ beforeEach(() => {
     if (url === '/api/agents') return response([]);
     if (url === '/api/chats/c-1') return response({ id: 'c-1', title: '简历改进', messages: [] });
     if (url === '/api/auth/me') return response({ id: 'u-1', username: 'demo', role: 'user' });
+    if (url === '/api/repository/stats') return response({ stars: 4, forks: 0, source: 'fallback', updated_at: null });
     if (url === '/api/resumes' && options?.method === 'POST') return response(resume);
     if (url === '/api/resumes') return response(resumeItems);
     if (url === '/api/resumes/r-1/retry') { resumeDetail = structuredClone(resume); return response(resumeDetail) }

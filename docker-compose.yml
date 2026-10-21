@@ -96,6 +96,23 @@ services:
     mem_limit: ${REPORT_MEMORY_LIMIT:-1g}
     command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=1 -Q report
 
+  # One scheduler per deployment; workers continue to consume the default queue.
+  celery-beat:
+    mem_limit: ${BEAT_MEMORY_LIMIT:-256m}
+    image: ${BACKEND_IMAGE:-resumeagent-backend:local}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery -A app.tasks.celery_app beat --loglevel=info --schedule=/var/lib/celery/celerybeat-schedule
+    volumes:
+      - celerybeat:/var/lib/celery
+    env_file:
+      - ./backend/.env
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   outbox:
     mem_limit: ${OPERATIONS_MEMORY_LIMIT:-256m}
     image: ${BACKEND_IMAGE:-resumeagent-backend:local}
@@ -191,4 +208,5 @@ services:
 volumes:
   pgdata:
   redisdata:
+  celerybeat:
   uploads:

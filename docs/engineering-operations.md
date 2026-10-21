@@ -25,9 +25,12 @@ python -m app.platform.worker
 python -m app.platform.operations.recovery
 celery -A app.tasks.celery_app worker --concurrency=2 -Q prepare,default
 celery -A app.tasks.celery_app worker --concurrency=1 -Q report
+celery -A app.tasks.celery_app beat --loglevel=info
 ```
 
 上述长驻命令各占一个终端；前端另在 `frontend` 执行 `npm run dev`。开发可用一个 Worker 消费 `prepare,report,default`，但不提供报告资源隔离。生产 Compose 已分开准备与报告 Worker，预取为1，任务 late ack。
+
+`celery-beat` 每个部署只运行一个实例，每天北京时间03:00投递 GitHub 仓库统计同步到 `default` 队列，启动时补取缺失或损坏的缓存。Compose 单独持久化其调度文件；可选 `GITHUB_TOKEN` 只在后端配置。统计接口仅返回 Redis 快照；失败保留上次成功值，无快照时返回4 star / 0 fork。运行与手动刷新步骤见[平台文档的仓库统计说明](platform.md#github-仓库统计)。
 
 Compose 为 Web/报告/PG 默认设置1GiB、准备 Worker 2GiB、Redis/监控512MiB、运维进程256MiB、前端128MiB的容器内存上限；这是初始保护值，不是内存预留或容量承诺。可通过 Compose 环境中的 `*_MEMORY_LIMIT` 调整，具体变量见 Compose 文件。Docker 的内存上限不等于 Redis 内部淘汰策略；Broker 持久任务由 PG 修复，不能把 Redis 当权威存储。
 

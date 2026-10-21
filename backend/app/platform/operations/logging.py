@@ -12,6 +12,8 @@ EVENTS = frozenset({
     "request_failed", "redis_connected", "redis_degraded", "ai_admitted", "ai_completed",
     "ai_failed", "job_failed", "job_received", "job_finished", "job_published",
     "outbox_delivery_unknown", "dispatch_failed", "inspection_failed",
+    "repository_stats_updated", "repository_stats_retrying", "repository_stats_failed",
+    "repository_stats_cache_unavailable", "repository_stats_initialization_failed",
 })
 
 

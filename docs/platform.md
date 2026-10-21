@@ -29,7 +29,9 @@ celery -A app.tasks.celery_app worker --loglevel=info --pool=solo -Q prepare,rep
 python -m app.platform.worker
 # 第四个终端，仍在 backend
 python -m app.platform.operations.recovery
-# 第五个终端，在 frontend
+# 第五个终端，仍在 backend：仓库统计定时调度，只运行一个实例
+celery -A app.tasks.celery_app beat --loglevel=info
+# 第六个终端，在 frontend
 npm ci
 npm run dev
 ```
@@ -45,6 +47,29 @@ python -m app.platform.cli reset-dev --confirm RESET-PLATFORM
 ```
 
 只删除新平台 `platform_` 表，不触碰旧版表，不删除原始文件。启动不会自动建表或重建数据。旧开发数据不做迁移。
+
+## GitHub 仓库统计
+
+导航栏显示 `Katrina55553/Resume-Agent` 的 star / fork 数。Compose 的 `celery-beat` 服务每天北京时间 **03:00** 投递同步任务，由现有 `default` 队列 Worker 消费；Beat 启动时还会投递一次初始化任务，仅在缓存缺失或损坏时请求 GitHub。每个部署只运行一个 Beat，调度文件保存在独立 `celerybeat` 卷。
+
+后端请求 GitHub 的超时为10秒，可在 `backend/.env` 配置可选 `GITHUB_TOKEN` 提高额度，公开仓库默认匿名访问。Token 只用于后端请求，不返回浏览器。网络故障、限流、GitHub 服务器错误或 Redis 故障最多重试3次，依次等待1、2、4分钟；失败日志为 `repository_stats_retrying` / `repository_stats_failed`，成功日志为 `repository_stats_updated`。
+
+成功快照包含 star、fork 与 UTC 更新时间，整体写入独立 Redis 键且不设 TTL。失败不会覆盖旧值；Redis 数据丢失后使用默认值 **4 / 0**，重启 Beat 可触发补取，或等待下次每日同步。统计不属于面试事实，不新增 PostgreSQL 表或迁移。
+
+登录后的 `GET /api/repository/stats` 仅读取缓存，返回 `{ stars, forks, updated_at, source }`；真实快照的 `source` 为 `github`，无可用缓存时为 `fallback` 且时间为 `null`。前端挂载时读取，页面可见时每小时重读；请求失败或缓存降级不会覆盖页面已显示的真实数字。仅更新数字无需重新构建前端。
+
+已有部署发布本次代码后，需同时更新后端、准备 Worker 与前端，并启动新的 Beat 服务：
+
+```powershell
+docker compose up -d --build backend celery celery-report frontend celery-beat
+docker compose logs celery-beat celery --tail 50
+```
+
+需要手动立即刷新时（从仓库根目录执行）：
+
+```powershell
+docker compose exec backend celery -A app.tasks.celery_app call app.tasks.repository_stats.refresh_repository_stats --queue default
+```
 
 ## 架构对照与阶段验收
 

@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     # Redis 配置
     REDIS_URL: str = "redis://localhost:6379/0"
 
+    # 可选：公开仓库统计默认匿名拉取，Token 仅在后端使用。
+    GITHUB_TOKEN: str = ""
+
     # LLM API（OpenAI 兼容格式，支持 DeepSeek 等第三方）
     LLM_BASE_URL: str = "https://api.deepseek.com"
     LLM_API_KEY: str = ""

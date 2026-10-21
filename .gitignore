@@ -37,6 +37,7 @@ uploads/
 
 # Celery
 celerybeat-schedule
+celerybeat-schedule.*
 celerybeat.pid
 
 # Coverage

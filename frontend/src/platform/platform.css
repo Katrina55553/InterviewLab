@@ -47,8 +47,7 @@
 .workspace-breadcrumb svg{flex-shrink:0;color:#81938a}
 .workspace-breadcrumb [aria-current=page]{color:#263e33;font-weight:600}
 .workspace-breadcrumb a:hover{color:#12634f}
-.repository-badge{display:flex;align-items:center;gap:9px;flex-shrink:0;margin-left:auto;padding:4px 11px;border-radius:10px;background:#f3efe5;transition:background .2s}
-.repository-badge:hover{background:#ebe5d6}
+.repository-badge{display:flex;align-items:center;gap:9px;flex-shrink:0;margin-left:auto;padding:4px 11px;border-radius:10px;background:transparent}
 .repository-badge-logo{flex-shrink:0;color:#24292f}
 .repository-badge-content{display:flex;flex-direction:column;gap:2px}
 .repository-badge-name{font-size:var(--type-label);font-weight:500;line-height:1.25;white-space:nowrap;color:#57564e}

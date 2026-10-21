@@ -1,3 +1,6 @@
+import { useEffect, useState } from 'react';
+import { api } from './api';
+import type { RepositoryStats } from './types';
 import { Icon } from './ui';
 
 const repository = {
@@ -8,12 +11,31 @@ const repository = {
 };
 
 export function RepositoryBadge() {
+  const [stats, setStats] = useState({ stars: repository.stars, forks: repository.forks });
+  useEffect(() => {
+    const controller = new AbortController();
+    let stopped = false;
+    let inFlight = false;
+    const refresh = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const next = await api<RepositoryStats>('/repository/stats', { signal: controller.signal });
+        if (!stopped && next?.source === 'github' && Number.isSafeInteger(next.stars) && next.stars >= 0
+          && Number.isSafeInteger(next.forks) && next.forks >= 0) setStats({ stars: next.stars, forks: next.forks });
+      } catch { /* Keep the last displayed numbers when the metadata service is unavailable. */ }
+      finally { inFlight = false }
+    };
+    void refresh();
+    const timer = window.setInterval(() => { if (!document.hidden) void refresh() }, 60 * 60 * 1000);
+    return () => { stopped = true; controller.abort(); window.clearInterval(timer) };
+  }, []);
   return <a
     className="repository-badge"
     href={repository.url}
     target="_blank"
     rel="noopener noreferrer"
-    aria-label={`${repository.name} GitHub 仓库，${repository.stars} 个 star，${repository.forks} 个 fork（在新窗口打开）`}
+    aria-label={`${repository.name} GitHub 仓库，${stats.stars} 个 star，${stats.forks} 个 fork（在新窗口打开）`}
     title="在 GitHub 查看项目"
   >
     <svg className="repository-badge-logo" width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -22,8 +44,8 @@ export function RepositoryBadge() {
     <span className="repository-badge-content">
       <span className="repository-badge-name">{repository.name}</span>
       <span className="repository-badge-stats">
-        <span><Icon name="star" size={14} />{repository.stars}</span>
-        <span><Icon name="fork" size={14} />{repository.forks}</span>
+        <span><Icon name="star" size={14} />{stats.stars}</span>
+        <span><Icon name="fork" size={14} />{stats.forks}</span>
       </span>
     </span>
   </a>;
