@@ -11,7 +11,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - 后端新业务集中在 `backend/app/platform/`；`api.py`、`chat.py`、`media.py` 为鉴权适配器，`service.py` 为统一面试命令服务，`graph.py` 为每次命令运行一轮的 LangGraph。
 - `models.py` 与 `media_models.py` 的 `platform_` 表由 Alembic 管理；先运行 `python -m app.platform.cli migrate`。应用启动只验证迁移，不自动建表。开发重建需显式 `reset-dev --confirm RESET-PLATFORM`。
 - `python -m app.platform.cli create-admin --username admin` 初始化管理员；注册接口始终创建普通用户。Cookie 会话、CSRF 和资源归属检查覆盖 REST、WebSocket 与私有文件。
-- `python -m app.platform.worker` 是必须运行的 outbox dispatcher，Celery 消费 `default` 队列；不能只启动 Web 服务而省略异步进程。
+- `python -m app.platform.worker` 是必须运行的 outbox dispatcher；准备任务走 `prepare`、报告走 `report`，保留 `default` 处理过渡任务。本地单 Worker 需消费 `prepare,report,default`，并运行 `python -m app.platform.operations.recovery` 巡检；不能只启动 Web 服务而省略异步进程。
 - PostgreSQL 保存权威快照、真实评估、命令节点进度及事件；Redis 丢失不能改变已有面试事实。恢复读取不能调用 AI，失败重试不能补造评分。
 - 前端页面与状态在 `frontend/src/platform/`。旧页面、stores、匿名 API、Agent 与旧 Celery 任务已删除，不要恢复旧协议。公共解析与脱敏在 `backend/app/core/documents.py`；规则解析仅用于显式演示模式。
 - `PLATFORM_DEMO_MODE=false` 为默认；只有明确开启后才能生成带演示标记的规则结果。无供应商凭据不代表真实服务已验收。

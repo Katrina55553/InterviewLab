@@ -8,6 +8,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
@@ -135,18 +136,40 @@ def test_circuit_opens_and_allows_only_one_half_open_probe(monkeypatch):
     monkeypatch.setattr(settings, "AI_CIRCUIT_MIN_CALLS", 10)
     breaker = guard.Circuit()
     for _ in range(10):
-        breaker.enter()
-        breaker.finish(True)
+        admission = breaker.enter()
+        breaker.finish(True, admission)
     with pytest.raises(PlatformError) as failure:
         breaker.enter()
     assert failure.value.code == "AI_CIRCUIT_OPEN"
     breaker.open_until = time.monotonic() - 1
-    breaker.enter()
+    probe = breaker.enter()
     with pytest.raises(PlatformError):
         breaker.enter()
-    breaker.finish(False)
+    breaker.finish(False, probe)
     breaker.enter()
     assert breaker.open_until == 0
+
+
+@pytest.mark.parametrize("probe_failure", [True, None])
+def test_finished_probe_cannot_change_the_next_probe_generation(monkeypatch, probe_failure):
+    monkeypatch.setattr(settings, "AI_CIRCUIT_MIN_CALLS", 1)
+    breaker = guard.Circuit()
+    breaker.finish(True, breaker.enter())
+    breaker.open_until = time.monotonic() - 1
+    previous = breaker.enter()
+    breaker.finish(probe_failure, previous)
+    assert not breaker.probing
+    if probe_failure:
+        with pytest.raises(PlatformError):
+            breaker.enter()
+        breaker.open_until = time.monotonic() - 1
+    current = breaker.enter()
+    breaker.finish(False, previous)
+    assert breaker.probing
+    with pytest.raises(PlatformError):
+        breaker.enter()
+    breaker.finish(False, current)
+    assert not breaker.probing and breaker.open_until == 0
 
 
 @pytest.mark.asyncio
@@ -162,6 +185,76 @@ async def test_quota_reserves_input_and_maximum_output_before_send(database, mon
     async with database.sessions() as db:
         assert (await db.get(AiCall, first)).reserved_tokens == 110
         assert await db.scalar(select(func.count()).select_from(AiPermit)) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sent", [False, True])
+async def test_recovery_releases_only_definitely_unsent_token_reservations(database, monkeypatch, sent):
+    owner = await user(database)
+    monkeypatch.setattr(settings, "TOKEN_QUOTA_PER_USER", 1000)
+    cfg = {**config(), "_input_budget": 200, "_output_budget": 700}
+    call_id = await guard.reserve(database.sessions, cfg, {"user_id": owner})
+    if sent:
+        await guard.mark_sent(database.sessions, call_id)
+    async with database.sessions() as db, db.begin():
+        now = await guard.database_now(db)
+        (await db.get(AiCall, call_id)).lease_until = now - timedelta(seconds=1)
+        (await db.get(AiPermit, call_id)).lease_until = now - timedelta(seconds=1)
+    await recovery.sweep_once()
+    await recovery.sweep_once()
+    async with database.sessions() as db:
+        row = await db.get(AiCall, call_id)
+        assert row.status == row.outcome == ("unknown" if sent else "not_sent")
+        assert row.reserved_tokens == (900 if sent else 0)
+        assert await db.get(AiPermit, call_id) is None
+    if sent:
+        with pytest.raises(PlatformError) as failure:
+            await guard.reserve(database.sessions, cfg, {"user_id": owner})
+        assert failure.value.code == "AI_QUOTA_EXCEEDED"
+    else:
+        retry = await guard.reserve(database.sessions, cfg, {"user_id": owner})
+        await recovery.sweep_once()
+        async with database.sessions() as db:
+            row = await db.get(AiCall, retry)
+            assert row.status == "running" and row.reserved_tokens == 900
+            assert await db.get(AiPermit, retry) is not None
+
+
+@pytest.mark.asyncio
+async def test_partial_stream_deadline_is_audited_unknown_and_blocks_new_attempts(database, monkeypatch):
+    from app.platform.ai import execution
+    from app.platform.operations import metrics
+    from tests.test_platform_runtime import SDK, SDKStream, chunk, configuration
+
+    owner = await user(database)
+    cfg = {**configuration(), "encrypted_key": config()["encrypted_key"]}
+    sdk_stream = SDKStream([chunk("partial"), chunk("not read")])
+    sdk = SDK([sdk_stream])
+    clock = [time.monotonic()]
+    monkeypatch.setattr(execution, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(runtime, "_client", lambda config: sdk)
+    monkeypatch.setattr(settings, "AI_UNKNOWN_LIMIT", 1)
+    monkeypatch.setattr(metrics, "async_session_maker", database.sessions)
+    with runtime.call_scope(owner):
+        source = runtime.stream_chat(cfg, [])
+        try:
+            assert await anext(source) == "partial"
+            clock[0] += settings.AI_TIMEOUT_SECONDS + 1
+            with pytest.raises(PlatformError) as failure:
+                await anext(source)
+            assert failure.value.code == "AI_TIMEOUT" and failure.value.outcome == "unknown"
+        finally:
+            await source.aclose()
+    assert sdk_stream.closed and len(sdk.requests) == 1
+    async with database.sessions() as db:
+        row = await db.scalar(select(AiCall).where(AiCall.user_id == owner))
+        assert row.status == row.outcome == "unknown" and row.reserved_tokens > 0
+        assert row.error_code == "AI_TIMEOUT"
+    exported = await metrics.render_metrics()
+    assert 'platform_ai_attempts_total{scene="chat",outcome="unknown"} 1.0' in exported
+    with pytest.raises(PlatformError) as blocked:
+        await guard.reserve(database.sessions, cfg, {"user_id": owner})
+    assert blocked.value.code == "AI_RESULT_UNKNOWN" and blocked.value.outcome == "not_sent"
 
 
 @pytest.mark.asyncio

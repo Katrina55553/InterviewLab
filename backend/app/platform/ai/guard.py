@@ -79,27 +79,38 @@ class Circuit:
         self.results = deque(maxlen=20)
         self.open_until = 0
         self.probing = False
+        self._generation = 0
 
     def enter(self):
         if self.open_until:
             if time.monotonic() < self.open_until or self.probing:
                 raise PlatformError("AI_CIRCUIT_OPEN", "模型供应商熔断中，本次未发送，请稍后重试")
             self.probing = True
+            self._generation += 1
+        return self._generation
 
-    def finish(self, failure: bool | None):
-        if failure is None:
-            self.probing = False
+    def finish(self, failure: bool | None, generation: int):
+        # Calls admitted before opening or before this probe cannot change its state.
+        if generation != self._generation:
             return
         if self.probing:
             self.probing = False
+            self._generation += 1
+            if failure is None:
+                return
             if not failure:
                 self.results.clear()
                 self.open_until = 0
                 return
             self.open_until = time.monotonic() + settings.AI_CIRCUIT_OPEN_SECONDS
+            self.results.append(failure)
+            return
+        if failure is None:
+            return
         self.results.append(failure)
         if len(self.results) >= settings.AI_CIRCUIT_MIN_CALLS and sum(self.results) / len(self.results) >= .5:
             self.open_until = time.monotonic() + settings.AI_CIRCUIT_OPEN_SECONDS
+            self._generation += 1
 
 
 def credential_scope(config):

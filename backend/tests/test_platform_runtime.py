@@ -3,13 +3,18 @@
 import asyncio
 import copy
 import json
+import time
 from collections import deque
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from httpx import Request
+from openai import APIConnectionError
 
 from app.platform import runtime
+from app.platform.ai import execution, guard
+from app.platform.contracts import PlatformError
 from app.platform.models import Agent, Provider
 
 
@@ -117,6 +122,81 @@ async def test_first_chunk_arrives_before_provider_completion(monkeypatch, audit
     assert audit[1].await_args.args[2] == "completed"
     assert audit_usage(audit[1]) == {"prompt_tokens": 12, "completion_tokens": 4}
     assert sdk.requests[0]["stream_options"] == {"include_usage": True}
+
+
+@pytest.mark.asyncio
+async def test_expired_budget_before_admission_remains_not_sent(monkeypatch, audit):
+    sdk = SDK([])
+    monkeypatch.setattr(runtime, "_client", lambda config: sdk)
+    with pytest.raises(PlatformError) as failure:
+        async with execution.attempt(configuration(), [], time.monotonic() - 1, 100):
+            pytest.fail("An expired request must not be admitted")
+    assert failure.value.code == "AI_TIMEOUT" and failure.value.outcome == "not_sent"
+    assert not sdk.requests
+    audit[0].assert_not_awaited()
+    audit[1].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("late_outcome", ["success", "failure", "cancel"])
+async def test_late_pre_open_request_cannot_finish_another_half_open_probe(monkeypatch, audit, late_outcome):
+    monkeypatch.setattr(runtime.settings, "AI_MAX_CONCURRENCY", 4)
+    monkeypatch.setattr(runtime.settings, "AI_CIRCUIT_MIN_CALLS", 1)
+    breaker = guard.Circuit()
+    monkeypatch.setattr(guard, "circuit", lambda config: breaker)
+    slow_entered, probe_entered, slow_release, probe_release = (asyncio.Event() for _ in range(4))
+    sdk = SDK([])
+
+    async def provider(**kwargs):
+        index = len(sdk.requests)
+        sdk.requests.append(kwargs)
+        if index == 0:
+            slow_entered.set()
+            await slow_release.wait()
+            if late_outcome == "failure":
+                raise APIConnectionError(request=Request("POST", "https://example.invalid"))
+            return response("old result")
+        if index == 1:
+            raise APIConnectionError(request=Request("POST", "https://example.invalid"))
+        probe_entered.set()
+        await probe_release.wait()
+        return response("probe result")
+
+    sdk.chat.completions.create = provider
+    monkeypatch.setattr(runtime, "_client", lambda config: sdk)
+    slow = asyncio.create_task(runtime.complete(configuration(), "slow", json_mode=False))
+    probe = None
+    try:
+        await asyncio.wait_for(slow_entered.wait(), 2)
+        with pytest.raises(PlatformError):
+            await runtime.complete(configuration(), "open circuit", json_mode=False)
+        assert breaker.open_until
+        breaker.open_until = time.monotonic() - 1
+        probe = asyncio.create_task(runtime.complete(configuration(), "probe", json_mode=False))
+        await asyncio.wait_for(probe_entered.wait(), 2)
+        if late_outcome == "cancel":
+            slow.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await slow
+        else:
+            slow_release.set()
+            if late_outcome == "failure":
+                with pytest.raises(PlatformError):
+                    await slow
+            else:
+                assert await slow == "old result"
+        assert breaker.probing, "Only the admitted probe may release half-open ownership"
+        with pytest.raises(PlatformError) as blocked:
+            await runtime.complete(configuration(), "must remain blocked", json_mode=False)
+        assert blocked.value.code == "AI_CIRCUIT_OPEN" and len(sdk.requests) == 3
+        probe_release.set()
+        assert await probe == "probe result"
+        assert not breaker.probing and breaker.open_until == 0
+    finally:
+        for pending in (slow, probe):
+            if pending is not None and not pending.done():
+                pending.cancel()
+        await asyncio.gather(*(task for task in (slow, probe) if task is not None), return_exceptions=True)
 
 
 @pytest.mark.asyncio

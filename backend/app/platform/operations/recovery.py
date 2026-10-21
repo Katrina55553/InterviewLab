@@ -40,7 +40,7 @@ async def sweep_once():
         await db.execute(update(AiFlight).where(AiFlight.status == "running", AiFlight.lease_until <= now).values(
             status="unknown", owner_token=None, error={"code": "AI_RESULT_UNKNOWN", "message": "节点执行者退出", "outcome": "unknown"}))
         await db.execute(update(AiCall).where(AiCall.status == "running", AiCall.outcome == "not_sent", AiCall.lease_until <= now).values(
-            status="not_sent", error_code="EXECUTOR_EXITED_BEFORE_SEND"))
+            status="not_sent", reserved_tokens=0, error_code="EXECUTOR_EXITED_BEFORE_SEND"))
         await db.execute(update(AiCall).where(AiCall.status == "running", AiCall.lease_until <= now).values(
             status="unknown", outcome="unknown", error_code="AI_RESULT_UNKNOWN"))
         await db.execute(delete(AiPermit).where(AiPermit.lease_until <= now))

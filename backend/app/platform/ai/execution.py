@@ -30,11 +30,16 @@ def remaining(deadline):
     return value
 
 
-def classify(exc):
+def classify(exc, *, sent=None):
+    if isinstance(exc, (APITimeoutError, TimeoutError)) or (
+        isinstance(exc, PlatformError) and exc.code == "AI_TIMEOUT" and sent is not None
+    ):
+        unknown = sent is not False
+        return PlatformError("AI_TIMEOUT",
+            "模型调用超时，外部结果可能未知；请确认后手动重试" if unknown else "AI 总时间预算已耗尽，本次未发送",
+            status=504, outcome="unknown" if unknown else "not_sent")
     if isinstance(exc, PlatformError):
         return exc
-    if isinstance(exc, (APITimeoutError, TimeoutError)):
-        return PlatformError("AI_TIMEOUT", "模型调用超时，外部结果可能未知；请确认后手动重试", status=504, outcome="unknown")
     if isinstance(exc, APIConnectionError):
         return PlatformError("AI_RESULT_UNKNOWN", "模型连接中断，结果未知；请确认后手动重试", outcome="unknown")
     if isinstance(exc, APIStatusError):
@@ -54,7 +59,7 @@ async def attempt(config, messages, deadline, max_tokens):
     async with guard.gate(guard.workload(config)).enter(deadline):
         breaker = guard.circuit(config)
         try:
-            breaker.enter()
+            admission = breaker.enter()
         except PlatformError:
             await observe_circuit(config, breaker)
             await record("circuit_open", scene=config["scene"], workload=guard.workload(config))
@@ -90,16 +95,16 @@ async def attempt(config, messages, deadline, max_tokens):
                 logger.info("ai_completed", extra={"call_id": call_id, "scene": config["scene"],
                             "duration_ms": int((time.monotonic() - started) * 1000)})
                 call_id = None
-            breaker.finish(False)
+            breaker.finish(False, admission)
         except BaseException as exc:
             cancelled = isinstance(exc, (asyncio.CancelledError, GeneratorExit))
-            error = classify(exc)
-            if not state["sent"] and not isinstance(exc, PlatformError):
+            error = classify(exc, sent=state["sent"])
+            if not state["sent"] and not isinstance(exc, PlatformError) and error.code != "AI_TIMEOUT":
                 error = PlatformError("AI_CONFIGURATION_ERROR", "调用未发送，请检查模型配置", retry_policy="never")
             # Validation, quota, cancellation and local saturation do not affect provider health.
-            attributable = isinstance(exc, (APIConnectionError, TimeoutError)) or (
-                isinstance(exc, APIStatusError) and exc.status_code >= 500)
-            breaker.finish(True if attributable else None)
+            attributable = state["sent"] and (error.code == "AI_TIMEOUT" or isinstance(exc, APIConnectionError) or (
+                isinstance(exc, APIStatusError) and exc.status_code >= 500))
+            breaker.finish(True if attributable else None, admission)
             if error.code in {"AI_OVERLOADED", "AI_QUOTA_EXCEEDED"}:
                 await record("rejected", scene=config["scene"], workload=guard.workload(config))
             if error.code == "AI_TIMEOUT":

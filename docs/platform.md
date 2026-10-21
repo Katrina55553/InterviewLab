@@ -24,13 +24,17 @@ python -m app.platform.cli migrate
 python -m app.platform.cli create-admin --username admin
 uvicorn app.main:app --reload --port 8000
 # 另一个终端，仍在 backend
-celery -A app.tasks.celery_app worker --loglevel=info --pool=solo -Q default
+celery -A app.tasks.celery_app worker --loglevel=info --pool=solo -Q prepare,report,default
 # 第三个终端
 python -m app.platform.worker
-# 第四个终端，在 frontend
+# 第四个终端，仍在 backend
+python -m app.platform.operations.recovery
+# 第五个终端，在 frontend
 npm ci
 npm run dev
 ```
+
+以上单 Worker 命令适合本地开发，会消费全部任务队列；准备/报告资源隔离的生产启动方式见[工程化运行手册](engineering-operations.md)。
 
 本地数据库连接使用 `localhost`，容器环境使用 `postgres`、`redis` 服务名。`CORS_ORIGINS` 必须列出实际浏览器地址（默认示例包含 8000、5173），WebSocket 同样检查来源。HTTPS 部署设置 `AUTH_COOKIE_SECURE=true`。密钥加密依赖 `SECRET_KEY`，修改该值后需要重新保存供应商 API Key，旧面试中的冻结凭据也将不可解密。
 
