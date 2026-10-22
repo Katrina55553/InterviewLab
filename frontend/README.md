@@ -1,4 +1,4 @@
-# 面试研习室 · AI Meeting 前端
+# 知面 InterviewLab 前端
 
 React、TypeScript、Vite、Tailwind CSS 与 Zustand。延续暖纸色、墨黑与翡翠绿的原有视觉风格。
 

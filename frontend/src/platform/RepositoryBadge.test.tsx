@@ -43,7 +43,7 @@ it('shows defaults immediately, then updates numbers and the accessible label', 
   expect(counts()).toEqual(['12', '2']);
   const link = container.querySelector('a')!;
   expect(link.getAttribute('aria-label')).toContain('12 个 star，2 个 fork');
-  expect(link.href).toBe('https://github.com/Katrina55553/Resume-Agent');
+  expect(link.href).toBe('https://github.com/Katrina55553/InterviewLab');
   expect(link.target).toBe('_blank');
   expect(link.rel).toBe('noopener noreferrer');
 });

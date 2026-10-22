@@ -1,4 +1,4 @@
-# ResumeAgent · AI 面试平台
+# 知面 InterviewLab · AI 面试平台
 
 基于 FastAPI、LangGraph 和 React 的 AI 面试平台，支持账号登录、简历解析与评分、多轮模拟面试和量化报告，并提供 AI 聊天、管理员模型配置及可选语音与视觉建议。
 
@@ -7,8 +7,8 @@
 ## 功能与使用流程
 
 1. **注册与登录**：普通用户注册，登录后管理自己的简历、面试与聊天记录；管理员通过命令行单独创建。
-2. **简历诊断**：在 `/resumes` 上传 PDF、DOCX 或 TXT，异步解析、评分、生成建议及五道主问题。
-3. **模拟面试**：从 `/interviews/new` 进入面试室，上传或选择简历，准备完成后开始；同一简历可创建多次独立面试。
+2. **简历诊断**：在 `/resumes` 上传 PDF、DOCX 或 TXT，异步解析、评分并生成改进建议；可携带简历与诊断结果创建 AI 对话继续讨论。
+3. **模拟面试**：从 `/interviews/new` 进入面试室，上传或选择简历，准备完成后开始；首次开始时生成五道主问题，同一简历可创建多次独立面试。
 4. **多轮问答**：LangGraph 根据回答评估并追问，每道主问题最多两次追问，支持跳过、换个问法和结束面试。
 5. **报告与历史**：查看逐轮回答、真实评分、雷达维度与改进建议；恢复面试和读取报告不会重新调用 AI。
 
@@ -19,6 +19,7 @@
 - **Agent 工具**：查询简历字段、分析代码片段，按场景配置工具权限。
 - **语音与视觉**：可选讯飞实时转写、长文本 TTS 和独立视觉建议。进入面试室请求摄像头权限并显示本机预览，拒绝或关闭摄像头不阻塞面试；视觉建议不参与答题评分。
 - **访问控制**：HttpOnly Cookie 会话、CSRF 校验、资源归属检查与私有文件访问。
+- **仓库统计**：导航栏展示 GitHub star / fork 数，后端每日北京时间 03:00 同步，失败时保留上次成功快照。
 
 默认使用真实模型服务。只有显式设置 `PLATFORM_DEMO_MODE=true` 才启用规则演示，结果带 `demo` 标记；缺少凭据或模型失败不会自动生成成功评分。
 
@@ -29,7 +30,7 @@
 | 前端 | React 19、TypeScript、Vite、Tailwind CSS 4、Zustand、React Router 7 |
 | 后端 | Python 3.12、FastAPI、SQLAlchemy 2、Alembic |
 | AI 编排 | LangGraph、OpenAI-compatible API，支持 DeepSeek 等供应商 |
-| 异步任务 | PostgreSQL Outbox、独立 dispatcher、Celery `default` 队列 |
+| 异步任务 | PostgreSQL Outbox、独立 dispatcher、Celery `prepare` / `report` / `default` 队列、Beat 定时调度 |
 | 数据 | PostgreSQL 16 保存业务事实；Redis 7 用于协调、通知及 Celery |
 | 部署 | Docker Compose、Nginx |
 
@@ -59,7 +60,19 @@ docker compose exec backend python -m app.platform.cli create-admin --username a
 
 打开 [http://localhost:8000](http://localhost:8000)，注册普通用户或使用初始化的管理员登录。管理员命令会交互式要求输入密码。
 
-Compose 会先由 `migrate` 服务执行 Alembic 迁移，再启动后端与异步进程。正常运行需要 `frontend`、`backend`、`postgres`、`redis`、`celery` 和 `outbox`；只启动 Web 服务无法完成简历准备等异步任务。
+Compose 由 `migrate` 服务执行 Alembic 迁移，后端与业务 Worker 等进程等待迁移完成后启动。默认服务包括：
+
+| 服务 | 职责 |
+| --- | --- |
+| `frontend` / `backend` | Nginx 静态页面与代理 / FastAPI API |
+| `postgres` / `redis` | 权威业务数据 / 协调、通知与任务 Broker |
+| `celery` | 消费 `prepare,default` 队列 |
+| `celery-report` | 独立消费 `report` 队列 |
+| `outbox` / `inspector` | 发布持久任务 / 巡检过期执行状态、回收许可 |
+| `celery-beat` | 仓库统计定时调度，每个部署只运行一个实例 |
+| `metrics` | 内网指标导出 |
+
+只启动 Web 服务无法完成简历准备和报告等异步任务。Prometheus 通过可选 `monitoring` profile 启动，部署与故障处理见 [工程化运行手册](docs/engineering-operations.md)。
 
 ## 本地开发
 
@@ -101,11 +114,11 @@ uvicorn app.main:app --reload --port 8000
 
 ### 2. 启动异步进程
 
-再打开两个终端，均进入 `backend` 并激活同一虚拟环境，分别执行：
+再打开四个终端，均进入 `backend` 并激活同一虚拟环境，分别执行：
 
 ```powershell
 # 终端二：Celery 消费平台任务，solo 池适用于 Windows 开发
-celery -A app.tasks.celery_app worker --loglevel=info --pool=solo -Q default
+celery -A app.tasks.celery_app worker --loglevel=info --pool=solo -Q prepare,report,default
 ```
 
 ```powershell
@@ -113,9 +126,21 @@ celery -A app.tasks.celery_app worker --loglevel=info --pool=solo -Q default
 python -m app.platform.worker
 ```
 
+```powershell
+# 终端四：巡检过期命令与任务、回收许可，不调用 AI
+python -m app.platform.operations.recovery
+```
+
+```powershell
+# 终端五：仓库统计定时调度，每个部署只运行一个实例
+celery -A app.tasks.celery_app beat --loglevel=info
+```
+
+本地单 Worker 消费全部队列；生产 Compose 将准备与报告 Worker 分开，避免报告任务占用准备任务的执行资源。
+
 ### 3. 启动前端
 
-在仓库根目录打开第四个终端：
+在仓库根目录打开第六个终端：
 
 ```powershell
 cd frontend
@@ -136,14 +161,17 @@ npm run dev
 | `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` | Celery Broker 与结果连接，本地开发也需修改主机地址 |
 | `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | 默认 OpenAI-compatible 模型服务 |
 | `SECRET_KEY` | 会话及供应商密钥保护，部署前替换为随机密钥 |
+| `ENVIRONMENT` | 生产设为 `production`，要求至少 32 字符的非示例 `SECRET_KEY` |
 | `PLATFORM_DEMO_MODE` | 默认 `false`；显式开启规则演示 |
 | `CORS_ORIGINS` | 实际浏览器来源列表，以逗号分隔；WebSocket 同样检查来源 |
 | `AUTH_COOKIE_SECURE` | HTTPS 部署设为 `true` |
 | `AI_TIMEOUT_SECONDS` / `AI_MAX_CONCURRENCY` / `AI_COMMAND_LEASE_SECONDS` | 模型超时、并发与命令租约 |
+| `AI_PROVIDER_CONCURRENCY` / `AI_INTERACTIVE_RESERVED_PERMITS` | 同一实际 API Key 的共享并发上限与交互保留额度 |
+| `GITHUB_TOKEN` | 可选，仅后端用于 GitHub 仓库统计请求，提高访问额度 |
 | `XFYUN_APP_ID` / `XFYUN_API_KEY` / `XFYUN_API_SECRET` | 可选讯飞 ASR / TTS，需分别开通产品 |
 | `MAX_UPLOAD_SIZE_MB` / `ALLOWED_EXTENSIONS` | 上传限制；模板为 10 MB、`pdf,docx,txt` |
 
-修改 `SECRET_KEY` 后需要重新保存供应商 API Key，已有面试中使用原密钥加密的冻结凭据也将不可解密。视觉建议需配置独立 vision 供应商及可选 Agent，配置在面试创建时冻结。
+已有数据的环境不能直接替换 `SECRET_KEY`，否则供应商密钥和冻结凭据将无法解密。轮换需停止写入、备份并通过 `python -m app.platform.operations.rekey` 重加密，具体步骤见 [密钥轮换说明](docs/engineering-operations.md#更换-secret_key)。视觉建议需配置独立 vision 供应商及可选 Agent，配置在面试创建时冻结。完整容量、配额与恢复参数见 [运行策略](docs/engineering-operations.md#运行策略)。
 
 ## 接口入口
 
@@ -155,9 +183,11 @@ npm run dev
 | `/ws/interviews/{id}?after=N` | 面试事件补取与命令提交 |
 | `/api/chats` | 聊天会话、附件与 SSE 消息 |
 | `/api/admin/providers` / `/api/admin/agents` | 管理员供应商及版本化角色管理 |
+| `/api/admin/diagnostics` | 管理员聚合诊断 |
+| `/api/repository/stats` | 登录后读取仓库统计缓存 |
 | `/api/media` / `/ws/asr/{interview_id}` | 媒体能力、语音合成与实时转写 |
 | `/api/interviews/{id}/vision` | 独立视觉建议 |
-| `/health` | 后端健康检查 |
+| `/health` / `/health/live` / `/health/ready` | 存活检查 / 存活检查 / 就绪与依赖检查 |
 
 修改请求需携带 `X-CSRF-Token`，值来自 `ra_csrf` Cookie。面试命令支持 `start`、`answer`、`skip`、`rephrase`、`end`，例如：
 
@@ -165,23 +195,22 @@ npm run dev
 {"request_id":"unique-request-id","type":"answer","expected_question_id":"question-id","version":1,"content":"我的回答"}
 ```
 
-MCP 入口为 `python -m app.mcp.server`，通过私有环境变量 `RESUME_AGENT_MCP_TOKEN` 绑定有效登录会话，使用相同的权限与应用服务。鉴权与接入约束见 [平台文档](docs/platform.md)。
-
 ## 项目结构
 
 ```text
-ResumeAgent/
+InterviewLab/
 ├── backend/
 │   ├── app/
 │   │   ├── platform/          # 认证、简历、面试、聊天、管理、媒体
 │   │   │   ├── service.py     # 统一面试命令服务
 │   │   │   ├── graph.py       # 每条命令运行一轮 LangGraph
 │   │   │   ├── worker.py      # Outbox dispatcher 与平台 Celery 任务
+│   │   │   ├── ai/            # 调用准入、共享许可与结果复用
+│   │   │   ├── operations/    # 恢复巡检、健康、指标与密钥轮换
 │   │   │   └── cli.py         # 迁移、管理员初始化、开发重置
 │   │   ├── core/              # 配置、数据库、LLM、公共文档解析与工具
 │   │   │   └── documents.py   # 文本提取、脱敏与演示解析
 │   │   ├── tasks/celery_app.py # Celery 配置与平台任务加载
-│   │   ├── mcp/               # 鉴权 MCP 接入
 │   │   └── main.py            # 路由注册与生命周期
 │   ├── migrations/            # 平台数据库版本迁移
 │   └── tests/
@@ -192,7 +221,10 @@ ResumeAgent/
 │   └── nginx.conf             # 静态资源、API 与 WebSocket 代理
 ├── docs/
 │   ├── platform.md            # 运行、架构、恢复语义与验收说明
+│   ├── engineering-operations.md # 队列、监控、发布与故障处理
 │   └── verification.md        # 部署与测试记录
+├── operations/                # Prometheus 配置、告警与仪表盘
+├── scripts/                   # 发布与回退脚本
 └── docker-compose.yml
 ```
 
@@ -233,11 +265,22 @@ python -m pytest tests/test_platform_service.py tests/test_platform_media.py -q 
 
 ```powershell
 docker compose ps
-docker compose logs backend celery outbox --tail 100
-docker compose up -d --build backend celery outbox
+docker compose logs backend celery celery-report outbox inspector celery-beat --tail 100
+docker compose up -d --build migrate backend celery celery-report outbox inspector metrics celery-beat
 docker compose up -d --build frontend
+docker compose exec backend python -m app.platform.cli probe-jobs
 docker compose down
 ```
+
+上述重建命令适用于开发环境；生产发布、备份与回退请按 [工程化运行手册](docs/engineering-operations.md#备份发布和回退) 执行。
+
+启用可选监控：
+
+```powershell
+docker compose --profile monitoring up -d prometheus
+```
+
+`metrics` 仅在容器内网的 9090 端口提供 `/metrics`，不通过 Nginx 公开。仓库统计的缓存行为和手动刷新命令见 [仓库统计说明](docs/platform.md#github-仓库统计)。
 
 仅在 `ENVIRONMENT=development` 下，可在 `backend` 目录显式重置平台数据：
 
@@ -250,5 +293,7 @@ python -m app.platform.cli reset-dev --confirm RESET-PLATFORM
 ## 更多文档
 
 - [平台运行与架构](docs/platform.md)
+- [工程化运行手册](docs/engineering-operations.md)
+- [工程化实施方案](docs/engineering-plan.md)
 - [部署与测试记录](docs/verification.md)
 - [Agent 开发规范](AGENTS.md)

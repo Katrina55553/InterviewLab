@@ -1,6 +1,6 @@
 # resume-agent-skill
 
-TRAE skill for ResumeAgent API —— AI 简历诊断 + 模拟面试 Agent 的对外服务封装。
+TRAE skill for InterviewLab API —— AI 简历诊断 + 模拟面试 Agent 的对外服务封装。
 
 让 TRAE IDE 中的 AI agent 通过标准 HTTP 调用完整的「简历上传 → 解析 → 诊断 → 模拟面试 → 评估报告」流程。
 
@@ -27,12 +27,12 @@ npx resume-agent-skill help         # 显示帮助
 
 ## 前置条件
 
-skill 只是 API 调用文档,需要 ResumeAgent 后端服务运行才能用:
+skill 只是 API 调用文档,需要 InterviewLab 后端服务运行才能用:
 
 ```bash
-# 克隆并启动 ResumeAgent
-git clone https://github.com/your-org/ResumeAgent.git
-cd ResumeAgent
+# 克隆并启动 InterviewLab
+git clone https://github.com/Katrina55553/InterviewLab.git
+cd InterviewLab
 docker compose up -d
 
 # 健康检查
@@ -47,7 +47,7 @@ curl http://localhost:8000/health
 安装完成后,在 TRAE IDE 中对 agent 说:
 
 - "帮我诊断这份简历" + 上传 PDF
-- "用 ResumeAgent 模拟面试我"
+- "用 InterviewLab 模拟面试我"
 - "获取这个 session 的评估报告"
 
 agent 会自动加载 skill 并按文档调用 API。

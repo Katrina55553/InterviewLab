@@ -1,11 +1,11 @@
 ---
 name: "resume-agent-api"
-description: "Calls ResumeAgent backend API to run AI resume diagnosis and mock interview. Invoke when user wants to upload a resume, get a diagnosis report, conduct a mock interview, or fetch an evaluation report through the ResumeAgent service."
+description: "Calls InterviewLab backend API to run AI resume diagnosis and mock interview. Invoke when user wants to upload a resume, get a diagnosis report, conduct a mock interview, or fetch an evaluation report through the InterviewLab service."
 ---
 
-# ResumeAgent API 对外服务封装
+# InterviewLab API 对外服务封装
 
-封装 ResumeAgent 后端的 REST + WebSocket API,让外部 agent 能通过标准 HTTP 调用完整的「简历上传 → 解析 → 诊断 → 模拟面试 → 评估报告」流程。
+封装 InterviewLab 后端的 REST + WebSocket API,让外部 agent 能通过标准 HTTP 调用完整的「简历上传 → 解析 → 诊断 → 模拟面试 → 评估报告」流程。
 
 ## 前置条件
 

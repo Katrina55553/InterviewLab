@@ -68,7 +68,7 @@ async def reset_dev(confirmation: str | None) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="ResumeAgent 新平台维护工具")
+    parser = argparse.ArgumentParser(description="InterviewLab 新平台维护工具")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("migrate", help="升级新平台数据库；不修改旧版表")
     commands.add_parser("check-config", help="验证生产密钥和运行配置")

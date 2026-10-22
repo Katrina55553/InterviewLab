@@ -88,7 +88,7 @@ async def test_sync_then_authenticated_http_read_uses_snapshot(cache, github):
     requests = github[1]
     assert len(requests) == 1 and str(requests[0].url) == stats.GITHUB_URL
     assert "authorization" not in requests[0].headers
-    assert requests[0].headers["user-agent"] == "ResumeAgent"
+    assert requests[0].headers["user-agent"] == "InterviewLab"
     assert requests[0].extensions["timeout"]["read"] == 10
     app = FastAPI()
     app.include_router(stats.router, prefix="/api")

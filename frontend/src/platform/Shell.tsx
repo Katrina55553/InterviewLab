@@ -39,7 +39,7 @@ export function AuthPage() {
     catch (err) { setError(errorMessage(err)) }
     finally { setBusy(false) }
   };
-  return <div className="auth-page bg-noise"><div className="auth-story"><div className="brand"><span className="brand-icon"><Icon name="spark" /></span>面试研习室 <small>AI MEETING</small></div><div className="auth-editorial"><span className="eyebrow">PREPARE WITH PURPOSE</span><h1>把每一次准备，<br />变成<span>更好的回答。</span></h1><p>从一份简历出发，在真实的问答里发现优势，<br />练习表达，看见每一步成长。</p><div className="auth-steps"><span>01 简历解析</span><i /><span>02 模拟面试</span><i /><span>03 复盘提升</span></div></div><p className="muted small">你的下一次面试，从这里开始。</p></div><div className="auth-form-wrap"><form className="auth-form" onSubmit={submit}><span className="eyebrow">YOUR NEXT CHAPTER</span><h2>{mode === 'login' ? '欢迎回来' : '开始你的练习'}</h2><p className="muted">{mode === 'login' ? '登录，继续积累属于你的面试经验。' : '创建账号，保存简历、对话和每一次进步。'}</p><label>用户名<input autoComplete="username" minLength={3} maxLength={64} required value={username} onChange={event => setUsername(event.target.value)} placeholder="你的用户名" /></label><label>密码<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={8} maxLength={128} required value={password} onChange={event => setPassword(event.target.value)} placeholder="至少 8 个字符" /></label>{error && <Notice>{error}</Notice>}<button className="btn primary wide" disabled={busy}>{busy ? '请稍候…' : mode === 'login' ? '登录研习室' : '创建账号'}<Icon name="arrow" size={18} /></button><p className="auth-switch">{mode === 'login' ? '还没有账号？' : '已经有账号？'}<button type="button" className="text-button" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError('') }}>{mode === 'login' ? '创建一个' : '去登录'}</button></p></form></div></div>;
+  return <div className="auth-page bg-noise"><div className="auth-story"><div className="brand"><span className="brand-icon"><Icon name="spark" /></span>知面 <small>InterviewLab</small></div><div className="auth-editorial"><span className="eyebrow">PREPARE WITH PURPOSE</span><h1>把每一次准备，<br />变成<span>更好的回答。</span></h1><p>从一份简历出发，在真实的问答里发现优势，<br />练习表达，看见每一步成长。</p><div className="auth-steps"><span>01 简历解析</span><i /><span>02 模拟面试</span><i /><span>03 复盘提升</span></div></div><p className="muted small">你的下一次面试，从这里开始。</p></div><div className="auth-form-wrap"><form className="auth-form" onSubmit={submit}><span className="eyebrow">YOUR NEXT CHAPTER</span><h2>{mode === 'login' ? '欢迎回来' : '开始你的练习'}</h2><p className="muted">{mode === 'login' ? '登录，继续积累属于你的面试经验。' : '创建账号，保存简历、对话和每一次进步。'}</p><label>用户名<input autoComplete="username" minLength={3} maxLength={64} required value={username} onChange={event => setUsername(event.target.value)} placeholder="你的用户名" /></label><label>密码<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={8} maxLength={128} required value={password} onChange={event => setPassword(event.target.value)} placeholder="至少 8 个字符" /></label>{error && <Notice>{error}</Notice>}<button className="btn primary wide" disabled={busy}>{busy ? '请稍候…' : mode === 'login' ? '登录知面' : '创建账号'}<Icon name="arrow" size={18} /></button><p className="auth-switch">{mode === 'login' ? '还没有账号？' : '已经有账号？'}<button type="button" className="text-button" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError('') }}>{mode === 'login' ? '创建一个' : '去登录'}</button></p></form></div></div>;
 }
 
 export function SessionGate() {
@@ -67,7 +67,7 @@ function SidebarContent({ user, busy, activePath, onLeave, onNavigate, onClose }
     <div className="sidebar-brand-row">
       <Link className="brand sidebar-brand" to="/" onClick={onNavigate}>
         <span className="brand-icon"><Icon name="spark" size={26} /></span>
-        <span>面试研习室<small>AI MEETING</small></span>
+        <span>知面<small>InterviewLab</small></span>
       </Link>
       {onClose && <button type="button" className="sidebar-icon-button" aria-label="关闭导航菜单" onClick={onClose}><Icon name="close" /></button>}
     </div>
@@ -143,7 +143,7 @@ function Shell() {
         <RepositoryBadge />
       </header>
       <main className={`page${isChat ? ' page-chat' : ''}`}>{error && <Notice>{error}</Notice>}<Outlet /></main>
-      <footer className="footer"><span>面试研习室</span><span>认真准备，自信表达。</span><span>AI 建议仅供练习参考</span></footer>
+      <footer className="footer"><span>知面</span><span>认真准备，自信表达。</span><span>AI 建议仅供练习参考</span></footer>
     </div>
   </div>;
 }

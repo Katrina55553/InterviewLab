@@ -12,7 +12,7 @@
 - AI 结果未知必须单独记录，用户确认后才能创建新尝试；规则结果只允许用于显式演示模式。
 - 本轮不恢复 RAG，不增加题库或可视化工作流编辑器，不拆微服务，不引入另一套工作流状态库。
 - 改动使用增量 Alembic 迁移，保留当前平台记录；不执行 `reset-dev`，也不安排旧版业务数据迁移。
-- AI-Meeting 目录只作参考，所有实现与测试落在 ResumeAgent。
+- AI-Meeting 目录只作参考，所有实现与测试落在 InterviewLab。
 
 完成后的标准是：供应商故障、流量过载、重复任务、进程退出和 Redis 丢失都有明确行为，并能通过独立进程实验与运行指标验证。
 
@@ -20,7 +20,7 @@
 
 | AI-Meeting 设计 | 当前基础 | 本轮工作 |
 | --- | --- | --- |
-| `InterviewWorkflowService` / `InterviewSessionFacade` | `platform/service.py` 统一 REST、WS、MCP 命令入口 | 拆清事务、业务决策与外部调用边界 |
+| `InterviewWorkflowService` / `InterviewSessionFacade` | `platform/service.py` 统一 REST、WS 命令入口 | 拆清事务、业务决策与外部调用边界 |
 | `InterviewFlowStateMachine` | LangGraph 节点、命令校验、JSONB 快照 | 显式状态转换规则、快照格式版本及契约测试 |
 | `AiCallGuardService` | 超时、单进程并发限制、配额、调用记录 | 熔断、准入、限长等待、按负载隔离与失败分类 |
 | `DistributedInterviewAiSingleFlightService` | 命令幂等、PG 租约、Redis 续租 | 持久化节点调用结果、owner/follower 等待与受控重试 |

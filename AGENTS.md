@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+本文件统一维护本仓库的 AI 编码助手开发约定。
 
 ## 项目概述
 

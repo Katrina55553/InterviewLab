@@ -76,7 +76,7 @@ function install() {
   console.log("  位置:" + destFile);
   console.log("");
   console.log("现在可以在 TRAE IDE 中让 agent 帮你诊断简历 / 模拟面试了。");
-  console.log("前提:ResumeAgent 后端服务已启动 (默认 http://localhost:8000)");
+  console.log("前提:InterviewLab 后端服务已启动 (默认 http://localhost:8000)");
 }
 
 function uninstall() {
@@ -102,7 +102,7 @@ function printPath() {
 // ============================================================
 
 function printHelp() {
-  console.log("resume-agent-skill - TRAE skill for ResumeAgent API");
+  console.log("resume-agent-skill - TRAE skill for InterviewLab API");
   console.log("");
   console.log("用法:");
   console.log("  npx resume-agent-skill install      安装 skill");

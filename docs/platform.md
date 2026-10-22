@@ -50,7 +50,7 @@ python -m app.platform.cli reset-dev --confirm RESET-PLATFORM
 
 ## GitHub 仓库统计
 
-导航栏显示 `Katrina55553/Resume-Agent` 的 star / fork 数。Compose 的 `celery-beat` 服务每天北京时间 **03:00** 投递同步任务，由现有 `default` 队列 Worker 消费；Beat 启动时还会投递一次初始化任务，仅在缓存缺失或损坏时请求 GitHub。每个部署只运行一个 Beat，调度文件保存在独立 `celerybeat` 卷。
+导航栏显示 `Katrina55553/InterviewLab` 的 star / fork 数。Compose 的 `celery-beat` 服务每天北京时间 **03:00** 投递同步任务，由现有 `default` 队列 Worker 消费；Beat 启动时还会投递一次初始化任务，仅在缓存缺失或损坏时请求 GitHub。每个部署只运行一个 Beat，调度文件保存在独立 `celerybeat` 卷。
 
 后端请求 GitHub 的超时为10秒，可在 `backend/.env` 配置可选 `GITHUB_TOKEN` 提高额度，公开仓库默认匿名访问。Token 只用于后端请求，不返回浏览器。网络故障、限流、GitHub 服务器错误或 Redis 故障最多重试3次，依次等待1、2、4分钟；失败日志为 `repository_stats_retrying` / `repository_stats_failed`，成功日志为 `repository_stats_updated`。
 
@@ -113,8 +113,6 @@ Outbox 与业务状态同事务提交，独立 dispatcher 发布 Celery 任务�
 动作支持 start/answer/skip/rephrase/end。默认五道主问题，每题最多两次追问；主动跳过主问题记零分，未提问的问题不计入均分。没有可评分回答时得分为空。雷达五维来自真实逐题评分，不从综合分反推。演示数据始终带 `demo` 标记。
 
 讯飞 ASR 需要开通实时转写大模型，配置 `XFYUN_APP_ID/API_KEY/API_SECRET`；浏览器发送 16kHz、单声道、16bit PCM，约 40ms 一帧。TTS 使用长文本任务创建/查询接口，音频下载后保存到私有 uploads 卷。仪态建议使用独立 vision 供应商及可选 vision Agent；配置在面试创建时冻结。
-
-MCP 通过 `python -m app.mcp.server` 运行，环境变量 `RESUME_AGENT_MCP_TOKEN` 绑定有效登录会话。工具参数不能指定任意用户身份；会话退出或过期后工具调用被拒绝。工具与网页使用相同应用服务及版本规则。令牌只应放在本机私有配置中。
 
 ## 检查与故障实验
 

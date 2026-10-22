@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
 
 # 创建 FastAPI 应用
 app = FastAPI(
-    title="ResumeAgent Interview Platform API",
+    title="InterviewLab API",
     description="简历评分、LangGraph 面试、AI 对话与语音平台",
     version="1.0.0",
     lifespan=lifespan,

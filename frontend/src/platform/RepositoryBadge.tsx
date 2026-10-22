@@ -4,8 +4,8 @@ import type { RepositoryStats } from './types';
 import { Icon } from './ui';
 
 const repository = {
-  name: 'Resume-Agent',
-  url: 'https://github.com/Katrina55553/Resume-Agent',
+  name: 'InterviewLab',
+  url: 'https://github.com/Katrina55553/InterviewLab',
   stars: 4,
   forks: 0,
 };

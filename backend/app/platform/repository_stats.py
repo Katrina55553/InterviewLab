@@ -19,8 +19,8 @@ from app.platform.auth import current_user
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["repository"], dependencies=[Depends(current_user)])
 
-GITHUB_URL = "https://api.github.com/repos/Katrina55553/Resume-Agent"
-CACHE_KEY = "platform:repository:Katrina55553/Resume-Agent:stats"
+GITHUB_URL = "https://api.github.com/repos/Katrina55553/InterviewLab"
+CACHE_KEY = "platform:repository:Katrina55553/InterviewLab:stats"
 LOCK_KEY = CACHE_KEY + ":lock"
 LOCK_SECONDS = 60
 RELEASE = "if redis.call('get',KEYS[1]) == ARGV[1] then return redis.call('del',KEYS[1]) else return 0 end"
@@ -69,7 +69,7 @@ async def repository_stats():
 
 
 async def fetch_counts() -> GitHubCounts:
-    headers = {"Accept": "application/vnd.github+json", "User-Agent": "ResumeAgent"}
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "InterviewLab"}
     if settings.GITHUB_TOKEN:
         headers["Authorization"] = f"Bearer {settings.GITHUB_TOKEN}"
     async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client, asyncio.timeout(10):

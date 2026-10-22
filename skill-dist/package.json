@@ -1,7 +1,7 @@
 {
   "name": "resume-agent-skill",
   "version": "0.1.0",
-  "description": "TRAE skill for ResumeAgent API - AI resume diagnosis and mock interview service",
+  "description": "TRAE skill for InterviewLab API - AI resume diagnosis and mock interview service",
   "bin": {
     "resume-agent-skill": "./install.js"
   },
