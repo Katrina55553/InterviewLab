@@ -40,7 +40,7 @@ try {
   assert.equal(await page.getByLabel('用户名', { exact: true }).inputValue(), username);
   const [loginResponse] = await Promise.all([
     page.waitForResponse(response => response.url().endsWith('/api/auth/login') && response.request().method() === 'POST'),
-    page.getByRole('button', { name: '登录研习室', exact: true }).click(),
+    page.getByRole('button', { name: '登录知面', exact: true }).click(),
   ]);
   assert.equal(loginResponse.status(), 200, await loginResponse.text());
   assert.equal((await page.request.get(`${base}/api/admin/diagnostics`)).status(), 200);

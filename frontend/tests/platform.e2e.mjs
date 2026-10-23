@@ -130,7 +130,7 @@ try {
   await page.getByRole('heading', { name: '欢迎回来' }).waitFor();
   await page.getByLabel('用户名', { exact: true }).fill(username);
   await page.getByLabel('密码', { exact: true }).fill(password);
-  await page.getByRole('button', { name: '登录研习室', exact: true }).click();
+  await page.getByRole('button', { name: '登录知面', exact: true }).click();
   await page.getByRole('heading', { name: '简历诊断' }).waitFor();
   assert.deepEqual(failures, [], `Browser errors: ${failures.join('; ')}`);
   console.log(JSON.stringify({ passed: true, username, interviewId, chatId, screenshots: output, checks: ['cookie auth + CSRF', 'resume preparation', 'same question after reload', '5 persisted answer evaluations', 'followup + rephrase', 'skip=0 + early end', 'async report', 'SSE chat persistence', 'mobile layout', 'logout + login'] }, null, 2));

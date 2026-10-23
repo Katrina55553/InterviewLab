@@ -1,5 +1,51 @@
 # 实施与验收记录
 
+## 2026-10-23 依赖与构建环境升级
+
+保留 Python 3.12、PostgreSQL 16 / Redis 7 的部署主线，以及现有 PostgreSQL 事实、Outbox、Celery 和逐命令 LangGraph 架构。本次未增加数据库迁移。
+
+| 组件 | 升级前 | 升级后 |
+| --- | --- | --- |
+| Node.js 构建 / CI | 20 | 24 LTS；前端 `.nvmrc` / engines 同步 |
+| FastAPI / Starlette | 0.115.0 / 0.38.6 | 0.159.1 / 1.9.0 |
+| python-multipart | 0.0.12 | 0.0.32 |
+| LangGraph / OpenAI SDK | 0.2.0 / 1.51.0 | 1.2.16 / 3.36.1 |
+| Pydantic / Celery | 2.9.0 / 5.4.0 | 2.14.1 / 5.6.3 |
+| SQLAlchemy | 2.0.35 | 2.0.55 |
+| Vite / React Router | 8.0.14 / 7.15.1 | 8.3.5 / 7.18.4 |
+| Vitest / coverage-v8 | 2.1.9 / 未声明 | 同为 5.0.5 |
+
+后端运行/开发依赖分离为 `.in` 输入和完整 SHA-256 锁文件，开发锁受运行锁约束。`python scripts/lock_dependencies.py` 默认保留满足约束的版本，`--upgrade` 主动更新；重生成两份锁字节一致。分别按 Windows / Linux 的 Python 3.12 环境求值，所有运行依赖均与开发锁一致，运行锁不包含 pytest、Ruff、pip-audit、uv 或 aiosqlite。Docker 强制哈希校验并仅安装运行依赖 wheel。
+
+前端删除未使用的 Axios / React Query，修复 coverage 指向已删除目录的问题，并纳入当前平台源码及 Vitest 配置的检查。Typography 0.5.20 仍引用存在安全问题的 selector-parser 6，局部 override 到 7.1.7；分别注入官方 6.0.10 与 7.1.7 构建，CSS 均为 46,972 字节、SHA-256 `AFD74E5DF25E801EAA6C0D36F730E020953B40F018B58A6386A963AF7E27E7F4`，逐字节一致。两处浏览器脚本的旧登录按钮文案也已对齐当前界面。
+
+CI 使用 Node 24 运行的 GitHub 官方 Actions v7，增加后端锁同步检查、Python/npm 漏洞审计与前端覆盖率执行；Docker 故障与浏览器门禁继续保留。运行、开发和维护命令见 [README](../README.md#依赖维护)。
+
+### 本次检查
+
+| 检查 | 结果 |
+| --- | --- |
+| 后端 Ruff / pip check | 通过，无依赖冲突 |
+| 后端完整 Pytest | 最终复测 267 passed、8 skipped，83.14 秒；包含真实 PostgreSQL / Redis 分支 |
+| 后端完整开发锁 pip-audit | 无已知漏洞 |
+| Linux Python 3.12 运行锁 | 92 个包的 manylinux x86_64 wheel 安装计划解析通过，未实际安装到目标平台 |
+| 前端 clean npm ci / lint / TypeScript / build | 通过，`dist/` 已重建 |
+| 前端 Vitest / coverage | 6 个文件、44 项测试通过；平台源码行覆盖率 78.24% |
+| 前端 npm audit | 所有级别均 0 漏洞 |
+| 普通用户浏览器 E2E | 通过：注册、上传、五轮面试、恢复、追问/换题/跳过、报告、SSE、移动端及重新登录 |
+| 管理员浏览器 E2E | 通过：供应商/Agent 创建更新、配置历史恢复、绑定、聊天及测试数据清理 |
+| 新 OpenAI SDK 本机协议验收 | 真实 SDK 的 JSON 与 SSE 调用成功；两条 completed 审计、许可释放；503 仅发一次请求，无 SDK 自动重试 |
+| Alembic check | 无模型差异 |
+| CI YAML / 测试 Compose 静态配置 | 通过 |
+
+浏览器测试使用新依赖虚拟环境、独立 demo 数据库、Celery / outbox / recovery 与本机 Vite；显式开启演示模式。临时 Vite 为 `/metrics` 转发后端的 404，以满足浏览器脚本的路由边界断言；这不代表实际运行了生产 Nginx。原脚本两处登录按钮文案更新后，普通用户和管理员两套均最终 exit 0。SDK 检查使用独立本机 `tests.fake_provider`，请求未发送到外部供应商。日志及截图保存在 Git 忽略的 `.test-work/dependency-upgrade-20261022/`。
+
+10 月 23 日最终后端复测退出码为 0，JUnit 与完整日志分别保存在 `backend/.test-work/final-upgrade-20261023.junit.xml`、`backend/.test-work/final-upgrade-20261023.log`。8 个跳过项为 SQLite 无法验证 PostgreSQL 锁语义的分支，对应 PostgreSQL 分支已执行；唯一 warning 是 Python 3.12 的 SQLite datetime adapter 弃用提醒。
+
+验收后本次隔离进程均已退出，最后启动的 PostgreSQL / Redis 已按精确数据目录、配置文件及端口归属停止，日志、截图与测试数据目录保留。本机原有 5432 数据库未被本次测试操作。
+
+本机数据库测试为隔离的 PostgreSQL 18.3 / Redis 7.4.2，生产与 CI 仍配置 PostgreSQL 16 / Redis 7。本机 Docker Linux 引擎未运行，因此本轮没有实际构建/运行升级后的容器，也未重跑绑定 Compose 的独立进程故障矩阵或容量探测。模型协议替身和显式演示均不代表真实 LLM、ASR/TTS 或视觉供应商验收；远端 GitHub Actions 执行仍需在提交后验证。
+
 ## 2026-10-21 工程化复查修复
 
 复查确认的4项 P2 已修复：

@@ -27,12 +27,15 @@
 
 | 层 | 技术与职责 |
 | --- | --- |
-| 前端 | React 19、TypeScript、Vite、Tailwind CSS 4、Zustand、React Router 7 |
-| 后端 | Python 3.12、FastAPI、SQLAlchemy 2、Alembic |
-| AI 编排 | LangGraph、OpenAI-compatible API，支持 DeepSeek 等供应商 |
-| 异步任务 | PostgreSQL Outbox、独立 dispatcher、Celery `prepare` / `report` / `default` 队列、Beat 定时调度 |
+| 前端 | React 19.2、TypeScript 6.0、Vite 8.3、Tailwind CSS 4.3、Zustand 5、React Router 7.18 |
+| 后端 | Python 3.12、FastAPI 0.159、Pydantic 2.14、SQLAlchemy 2.0、Alembic 1.20 |
+| AI 编排 | LangGraph 1.2、OpenAI Python SDK 3.36，通过 OpenAI-compatible API 接入 DeepSeek 等供应商 |
+| 异步任务 | PostgreSQL Outbox、独立 dispatcher、Celery 5.6 `prepare` / `report` / `default` 队列、Beat 定时调度 |
 | 数据 | PostgreSQL 16 保存业务事实；Redis 7 用于协调、通知及 Celery |
-| 部署 | Docker Compose、Nginx |
+| 构建与部署 | Node.js 24 LTS、Docker Compose、Nginx |
+| 测试与依赖检查 | pytest、Ruff、Vitest 5、Playwright、pip-audit、npm audit |
+
+精确依赖版本以 `frontend/package-lock.json` 和后端完整哈希锁文件为准；维护方式见[依赖维护](#依赖维护)。
 
 ```text
 浏览器 → Nginx → FastAPI 鉴权适配器 → 平台应用服务 → LangGraph / 模型网关
@@ -76,7 +79,7 @@ Compose 由 `migrate` 服务执行 Alembic 迁移，后端与业务 Worker 等�
 
 ## 本地开发
 
-准备 Python 3.12、兼容 Vite 8 的 Node.js（建议 22.12+）、可连接的 PostgreSQL 16 与 Redis 7。Python 文件校验还依赖系统 `libmagic`，Docker 镜像已安装该依赖。
+准备 Python 3.12、Node.js 24 LTS、可连接的 PostgreSQL 16 与 Redis 7。前端 Docker 构建与 CI 同样使用 Node.js 24。Python 文件校验还依赖系统 `libmagic`，Docker 镜像已安装该依赖。
 
 仓库的 Compose 默认不向宿主机映射 PostgreSQL、Redis 端口。本地运行后端时，请使用本机数据库与 Redis，或先为容器配置端口映射。
 
@@ -89,7 +92,7 @@ Copy-Item backend/.env.example backend/.env
 cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python -m pip install --require-hashes -r requirements-dev.txt
 ```
 
 将 `backend/.env` 中连接地址改为本机实际地址，例如：
@@ -213,6 +216,9 @@ InterviewLab/
 │   │   ├── tasks/celery_app.py # Celery 配置与平台任务加载
 │   │   └── main.py            # 路由注册与生命周期
 │   ├── migrations/            # 平台数据库版本迁移
+│   ├── requirements.in        # 运行依赖输入，requirements.txt 为完整哈希锁
+│   ├── requirements-dev.in    # 开发依赖输入，requirements-dev.txt 约束到运行锁
+│   ├── scripts/lock_dependencies.py # 统一重生成运行/开发锁文件
 │   └── tests/
 ├── frontend/
 │   ├── src/platform/          # 平台页面、状态与样式
@@ -230,12 +236,30 @@ InterviewLab/
 
 前后端业务分别在各自的 `platform/` 目录维护。后端公共解析与脱敏由 `core/documents.py` 提供，模型网关与工具权限由 `platform/runtime.py` 管理。
 
-## 检查与测试
+## 依赖维护
 
-后端，在 `backend` 目录执行（Ruff 需另行安装）：
+后端 `requirements.in` 声明运行依赖，`requirements-dev.in` 声明测试和开发工具；对应的 `.txt` 文件锁定全部传递依赖及分发包 SHA-256。开发锁通过运行锁约束公共包，确保本地测试、CI 与 Docker 使用相同的运行依赖。Docker 只安装 `requirements.txt`。
+
+在 `backend` 目录、已安装开发依赖的虚拟环境中执行：
 
 ```powershell
-python -m pip install ruff
+# 修改 .in 后同步锁文件；保留仍满足约束的已有版本
+python scripts/lock_dependencies.py
+# 主动更新约束范围内的版本，然后运行全部检查
+python scripts/lock_dependencies.py --upgrade
+python -m pip install --require-hashes -r requirements-dev.txt
+```
+
+前端使用 Node.js 24 LTS 和 `npm ci`，依赖修改时同步 `package-lock.json`，构建后同步提交 `frontend/dist/`。CI 对 Python 完整开发锁和 npm 依赖执行安全审计。
+
+## 检查与测试
+
+后端，在 `backend` 目录执行；开发锁文件包含 Ruff、pytest 和依赖审计工具：
+
+```powershell
+python -m pip install --require-hashes -r requirements-dev.txt
+python -m pip check
+python -m pip_audit --disable-pip --require-hashes -r requirements-dev.txt
 python -m ruff check .
 python -m pytest tests -q -p no:cacheprovider
 ```
@@ -245,6 +269,8 @@ python -m pytest tests -q -p no:cacheprovider
 ```powershell
 npm run lint
 npm test
+npm run test:coverage
+npm audit --audit-level=high
 npm run build
 ```
 
@@ -258,6 +284,8 @@ python -m pytest tests/test_platform_service.py tests/test_platform_media.py -q 
 ```
 
 模型替身测试验证契约与故障行为。真实 LLM、ASR、TTS 和视觉能力需分别配置凭据并实联验收，详见 [验证记录](docs/verification.md)。
+
+2026-10-23 依赖升级验收：后端 **267 passed / 8 skipped**，前端 **44 passed**；lint、类型检查、覆盖率执行、生产构建，以及普通用户和管理员两套浏览器流程均通过。Python/npm 依赖审计未发现已知漏洞。后端实测使用隔离 PostgreSQL 18.3 / Redis 7.4.2，生产与 CI 仍配置 PostgreSQL 16 / Redis 7；本轮尚未验证升级后的 Docker 镜像构建、远端 CI 和真实供应商联调。完整环境及测试边界见[验收记录](docs/verification.md#2026-10-23-依赖与构建环境升级)。
 
 ## 常用运维命令
 

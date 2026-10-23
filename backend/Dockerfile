@@ -17,8 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 复制依赖文件并安装
 COPY requirements.txt .
 RUN pip install --no-cache-dir \
+    --require-hashes \
+    --only-binary=:all: \
     -i https://repo.huaweicloud.com/repository/pypi/simple/ \
-    --trusted-host repo.huaweicloud.com \
     --default-timeout=300 \
     --retries=5 \
     -r requirements.txt

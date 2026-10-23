@@ -19,7 +19,7 @@ docker compose exec backend python -m app.platform.cli create-admin --username a
 
 ```powershell
 cd backend
-python -m pip install -r requirements.txt
+python -m pip install --require-hashes -r requirements-dev.txt
 python -m app.platform.cli migrate
 python -m app.platform.cli create-admin --username admin
 uvicorn app.main:app --reload --port 8000
@@ -32,6 +32,7 @@ python -m app.platform.operations.recovery
 # 第五个终端，仍在 backend：仓库统计定时调度，只运行一个实例
 celery -A app.tasks.celery_app beat --loglevel=info
 # 第六个终端，在 frontend
+# 使用 Node.js 24 LTS，与 Docker / CI 一致
 npm ci
 npm run dev
 ```

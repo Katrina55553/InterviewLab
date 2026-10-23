@@ -15,7 +15,8 @@
 - PostgreSQL 保存权威快照、真实评估、命令节点进度及事件；Redis 丢失不能改变已有面试事实。恢复读取不能调用 AI，失败重试不能补造评分。
 - 前端页面与状态在 `frontend/src/platform/`。旧页面、stores、匿名 API、Agent 与旧 Celery 任务已删除，不要恢复旧协议。公共解析与脱敏在 `backend/app/core/documents.py`；规则解析仅用于显式演示模式。
 - `PLATFORM_DEMO_MODE=false` 为默认；只有明确开启后才能生成带演示标记的规则结果。无供应商凭据不代表真实服务已验收。
-- 测试：后端 `ruff check .`、`pytest tests -q -p no:cacheprovider`；前端 `npm run lint`、`npm test`、`npm run build`。真实数据库测试通过 `PLATFORM_TEST_DATABASE_URL` 与 `PLATFORM_TEST_REDIS_URL` 指向隔离环境。
+- 依赖：后端运行/开发输入分别在 `backend/requirements.in`、`requirements-dev.in`，对应 `.txt` 为完整带哈希锁文件；开发安装 `python -m pip install --require-hashes -r requirements-dev.txt`，Docker 只安装运行锁。前端、Docker builder 和 CI 统一使用 Node.js 24 LTS。
+- 测试：后端 `ruff check .`、`pytest tests -q -p no:cacheprovider`；前端 `npm run lint`、`npm test`、`npm run test:coverage`、`npm run build`。CI 执行 Python/npm 依赖安全审计。真实数据库测试通过 `PLATFORM_TEST_DATABASE_URL` 与 `PLATFORM_TEST_REDIS_URL` 指向隔离环境。
 - RAG、知识库与 Elasticsearch 已移除。现有工具为 `lookup_resume_field` 和 `verify_code_snippet`。
 
 ## 技术栈
@@ -32,7 +33,7 @@
 
 ```bash
 # 本地开发
-cd frontend && npm install && npm run dev    # 前端 dev server (port 5173)
+cd frontend && npm ci && npm run dev         # Node.js 24，前端 dev server (port 5173)
 cd backend && uvicorn app.main:app --reload  # 后端 dev server (port 8000)
 
 # Docker 部署
@@ -87,6 +88,6 @@ REDIS_URL=redis://redis:6379/0           # Redis 连接
 ## 注意事项
 
 - `frontend/dist/` 需要提交到 Git（Docker 直接 serve 静态文件）
-- Dockerfile 基础镜像用 `python:3-slim`，阿里云服务器需要配置 Docker 镜像源
+- 后端 Dockerfile 基础镜像固定 Python 3.12 系列（`python:3.12-slim`），阿里云服务器需要配置 Docker 镜像源
 - Git 推送需要开代理（GGDD 端口 9674），或配置 `git config --global http.proxy http://127.0.0.1:9674`
 - DeepSeek 不完全支持 OpenAI 结构化 tool_calls，`llm.py` 有 DSML 文本格式兼容解析

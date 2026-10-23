@@ -1,0 +1,10 @@
+# Use exactly the same runtime versions in CI and production.
+-r requirements.in
+-c requirements.txt
+
+aiosqlite>=0.22.1,<1
+pytest>=9.1.1,<10
+pytest-asyncio>=1.4.0,<2
+ruff>=0.17.1,<0.18
+pip-audit>=2.10.1,<3
+uv==0.13.5

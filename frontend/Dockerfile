@@ -1,5 +1,5 @@
 # 多阶段构建：先编译前端，再用 Nginx 部署
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 
 WORKDIR /app
 
