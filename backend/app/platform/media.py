@@ -30,7 +30,7 @@ from app.platform.media_tts import (
     tts_create_body,
     tts_request,
 )
-from app.platform.models import Agent, Interview, Provider, User, new_id, utcnow
+from app.platform.models import Agent, Interview, User, UserAISettings, new_id, utcnow
 from app.platform.runtime import AIError, call_scope, complete_vision
 
 router = APIRouter(tags=["platform-media"])
@@ -81,11 +81,8 @@ async def capabilities(interview_id: str | None = None, _user: User = Depends(cu
             vision_enabled = bool((interview.config_snapshot.get("vision") or {}).get("enabled"))
         else:
             agent = (await db.execute(select(Agent).where(Agent.scene == "vision"))).scalar_one_or_none()
-            query = select(Provider.id).where(Provider.enabled.is_(True), Provider.vision.is_(True))
-            if agent:
-                query = query.where(Provider.id == agent.provider_id)
-            vision_id = (await db.execute(query.limit(1))).scalar_one_or_none()
-            vision_enabled = vision_id is not None and (agent is None or agent.enabled)
+            personal = await db.get(UserAISettings, _user.id)
+            vision_enabled = bool(personal and personal.vision and (agent is None or agent.enabled))
     configured = all(_credentials())
     return {"asr": configured, "tts": configured, "vision": vision_enabled}
 
@@ -383,7 +380,7 @@ async def analyze_frame(interview_id: str, file: UploadFile = File(...),
     async with async_session_maker() as db:
         interview = await owned_interview(db, interview_id, user.id)
         config = interview.config_snapshot.get("vision") or {}
-        if not config.get("enabled") or not config.get("provider_id"):
+        if not config.get("enabled") or not config.get("user_provider_id"):
             return {"feedback": None, "available": False, "error": "本次面试未配置视觉模型"}
         if not await _try_lock(db, "vision", interview_id):
             raise HTTPException(409, "上一帧仍在分析中")

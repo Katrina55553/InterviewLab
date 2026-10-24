@@ -81,7 +81,7 @@ async def upload_resume(file: UploadFile = File(...), user: User = Depends(curre
     suffix = Path(file.filename or "").suffix.lower()
     if suffix == ".doc":
         raise HTTPException(400, "请将旧版 DOC 转换为 DOCX、PDF 或 TXT 后上传")
-    configs = await freeze_configs()
+    configs = await freeze_configs(user_id=user.id)
     resume_id = new_id()
     path = Path("uploads/platform") / user.id / (resume_id + suffix)
     path.parent.mkdir(parents=True, exist_ok=True)

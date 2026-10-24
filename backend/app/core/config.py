@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "deepseek-chat"
     LLM_MODEL_LIGHT: str = "deepseek-chat"
     LLM_MODEL_HEAVY: str = "deepseek-reasoner"
+    # User-entered endpoints must be explicitly trusted; never expose an arbitrary HTTP proxy.
+    USER_LLM_ALLOWED_BASE_URLS: str = (
+        "https://api.deepseek.com,https://api.deepseek.com/v1,https://api.openai.com/v1,"
+        "https://openrouter.ai/api/v1,https://api.siliconflow.cn/v1,"
+        "https://dashscope.aliyuncs.com/compatible-mode/v1,https://api.moonshot.cn/v1,"
+        "https://open.bigmodel.cn/api/paas/v4"
+    )
 
     # 安全配置
     SECRET_KEY: str = Field(default="change-me-in-production", min_length=16)

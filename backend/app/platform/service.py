@@ -93,7 +93,7 @@ def queue_job(db, kind: str, aggregate_id: str) -> Outbox:
 async def create_interview(user_id: str, resume_id: str) -> dict:
     # Preparation retains its own immutable generation configuration. A new attempt
     # freezes the CURRENT interview/vision configuration, not the resume's old one.
-    configs = await freeze_configs()
+    configs = await freeze_configs(user_id=user_id)
     async with async_session_maker() as db, db.begin():
         resume = await owned(db, Resume, resume_id, user_id)
         if resume.status != "ready":
@@ -285,7 +285,7 @@ async def events_after(user_id: str, interview_id: str, after: int) -> list[dict
 
 
 async def retry_resume(user_id: str, resume_id: str) -> dict:
-    configs = await freeze_configs()
+    configs = await freeze_configs(user_id=user_id)
     async with async_session_maker() as db, db.begin():
         row = await owned(db, Resume, resume_id, user_id, lock=True)
         if row.status not in ("failed", "processing", "queued"):

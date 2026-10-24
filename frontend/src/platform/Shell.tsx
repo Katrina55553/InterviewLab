@@ -20,6 +20,9 @@ const navigationGroups = [
     { to: '/interviews/new', label: '模拟面试', icon: 'headphones', paths: ['/interviews/:id'] },
     { to: '/community', label: '面经社区', icon: 'chat', paths: ['/community'] },
   ] },
+  { label: '账户', items: [
+    { to: '/settings/ai', label: 'AI 设置', icon: 'settings', paths: ['/settings/ai'] },
+  ] },
   { label: '更多', adminOnly: true, items: [
     { to: '/admin', label: '管理设置', icon: 'settings', paths: ['/admin'] },
   ] },

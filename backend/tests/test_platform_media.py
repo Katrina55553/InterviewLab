@@ -190,6 +190,7 @@ def test_disabled_capabilities_are_truthful(media_client, monkeypatch):
     authorize(media_client)
     monkeypatch.setattr(media, "_credentials", lambda: ("", "", ""))
     session = mock_session(None, None)
+    session.get = AsyncMock(return_value=None)
     monkeypatch.setattr(media, "async_session_maker", lambda: session)
     assert media_client.get("/api/media/capabilities").json() == {"asr": False, "tts": False, "vision": False}
 
@@ -369,7 +370,7 @@ async def test_inflight_vision_is_rejected_before_call(monkeypatch):
     session = mock_session()
     monkeypatch.setattr(media, "async_session_maker", lambda: session)
     monkeypatch.setattr(media, "owned_interview", AsyncMock(return_value=SimpleNamespace(config_snapshot={
-        "vision": {"enabled": True, "provider_id": "provider"},
+        "vision": {"enabled": True, "provider_id": None, "user_provider_id": "personal-provider"},
     })))
     monkeypatch.setattr(media, "_try_lock", AsyncMock(return_value=False))
     provider = AsyncMock()
@@ -390,7 +391,7 @@ async def test_vision_uses_audited_gateway_with_owner_and_frozen_prompt(monkeypa
 
     session = mock_session(None)
     monkeypatch.setattr(media, "async_session_maker", lambda: session)
-    config = {"scene": "vision", "enabled": True, "provider_id": "provider", "provider_version": 3,
+    config = {"scene": "vision", "enabled": True, "provider_id": None, "user_provider_id": "personal-provider", "provider_version": 3,
               "prompt": "冻结提示词", "model": "vision-model", "base_url": "https://provider.invalid/v1"}
     monkeypatch.setattr(media, "owned_interview", AsyncMock(return_value=SimpleNamespace(config_snapshot={"vision": config})))
     monkeypatch.setattr(media, "_try_lock", AsyncMock(return_value=True))

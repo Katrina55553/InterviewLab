@@ -13,7 +13,7 @@ from sqlalchemy import delete, func, or_, select, text, update
 
 from app.core.config import settings
 from app.platform.contracts import PlatformError, trace_id
-from app.platform.models import Agent, AiCall, AiPermit, Provider, new_id, utcnow
+from app.platform.models import Agent, AiCall, AiPermit, Provider, UserModelCredential, new_id, utcnow
 
 _gates = weakref.WeakKeyDictionary()
 _circuits = {}
@@ -116,6 +116,8 @@ class Circuit:
 def credential_scope(config):
     from app.platform.admin import decrypt_key
 
+    if config.get("auth_method") == "none":
+        return hmac.new(settings.SECRET_KEY.encode(), ("anonymous:" + config["base_url"]).encode(), hashlib.sha256).hexdigest()
     try:
         secret = decrypt_key(config.get("encrypted_key"))
     except Exception as exc:
@@ -154,9 +156,18 @@ async def lock_scope(db, key):
 async def reserve(sessions, config, context):
     if context.get("fence"):
         await context["fence"]()
+    user_id = context.get("user_id")
+    if user_id and config.get("credential_owner_id") != user_id:
+        raise PlatformError("AI_CONFIGURATION_ERROR", "此记录未绑定你的个人 AI 配置，请配置后重新创建诊断或面试",
+                            retry_policy="never")
     scope, kind = credential_scope(config), workload(config)
     call_id = new_id()
     async with sessions() as db, db.begin():
+        if config.get("credential_owner_id"):
+            personal = await db.get(UserModelCredential, config.get("user_provider_id"))
+            if not personal or personal.user_id != config["credential_owner_id"]:
+                raise PlatformError("AI_CONFIGURATION_ERROR", "此个人 AI 配置已移除，请重新配置并创建诊断或面试",
+                                    retry_policy="never")
         # Live emergency policy is checked even for frozen interview configuration.
         if config.get("provider_id"):
             provider = await db.get(Provider, config["provider_id"])
@@ -180,7 +191,6 @@ async def reserve(sessions, config, context):
         background_budget = max(0, settings.AI_PROVIDER_CONCURRENCY - settings.AI_INTERACTIVE_RESERVED_PERMITS)
         if kind != "interactive" and sum(p.workload != "interactive" for p in permits) >= background_budget:
             raise PlatformError("AI_OVERLOADED", "后台容量已满，保留交互面试容量，本次未发送")
-        user_id = context.get("user_id")
         budget = config.get("_input_budget", 0) + config.get("_output_budget", settings.AI_MAX_OUTPUT_TOKENS)
         if user_id:
             await lock_scope(db, "quota:" + user_id)

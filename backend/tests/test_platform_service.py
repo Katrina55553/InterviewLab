@@ -16,7 +16,20 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.core.config import settings
 from app.platform import api, auth, coordination, graph, runtime, service, worker
-from app.platform.models import Agent, Command, Event, Interview, LoginSession, Outbox, Resume, User, new_id, utcnow
+from app.platform.models import (
+    Agent,
+    Command,
+    Event,
+    Interview,
+    LoginSession,
+    Outbox,
+    Resume,
+    User,
+    UserAISettings,
+    UserModelCredential,
+    new_id,
+    utcnow,
+)
 from app.platform.runtime import DIMENSIONS, AIError
 from tests.platform_db import isolated_database, postgres_test_url
 
@@ -75,6 +88,12 @@ async def seed(database, *, active: bool = True):
     async with database.sessions() as db, db.begin():
         db.add(User(id=user_id, username="user_" + user_id[:8], password_hash="unused", role="user"))
         await db.flush()
+        db.add(UserModelCredential(user_id=user_id, provider_id="deepseek", base_url="https://api.deepseek.com",
+                                   encrypted_key="test-encrypted-key", version=1))
+        db.add(UserAISettings(user_id=user_id, base_url="https://api.deepseek.com", model="deepseek-chat",
+                             encrypted_key="test-encrypted-key", vision=False, version=1,
+                             selection={"connectionType": "builtin", "authMethod": "api-key",
+                                        "providerId": "deepseek", "modelId": "deepseek-chat"}))
         db.add(
             Resume(
                 id=resume_id,

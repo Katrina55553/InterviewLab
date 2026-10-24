@@ -113,7 +113,7 @@ async def test_streamed_reply_persists_original_input_and_completed_replay_skips
     assert events(second) == [("delta", {"content": "第一段第二段"}),
                               ("done", {"message_id": parsed[-1][1]["message_id"], "replayed": True})]
     assert len(stream_calls) == 1
-    chat.freeze_configs.assert_awaited_once_with(None)
+    chat.freeze_configs.assert_awaited_once_with(None, user_id=user["id"])
     mismatch = await client.post(f"/api/chats/{record['id']}/messages", json={**body, "content": "different"}, headers=csrf(client))
     assert mismatch.status_code == 409
     history = (await client.get(f"/api/chats/{record['id']}")).json()

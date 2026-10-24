@@ -20,7 +20,7 @@ from app.platform.admin import encrypt_key
 from app.platform.ai import flights, guard
 from app.platform.contracts import PlatformError, error_payload, traced
 from app.platform.domain.state import read_snapshot, validate_command
-from app.platform.models import AiCall, AiFlight, AiPermit, Outbox, User, new_id, utcnow
+from app.platform.models import AiCall, AiFlight, AiPermit, Outbox, User, UserModelCredential, new_id, utcnow
 from app.platform.operations import recovery
 from tests.platform_db import isolated_database, postgres_test_url
 
@@ -45,6 +45,9 @@ async def user(database):
     value = new_id()
     async with database.sessions() as db, db.begin():
         db.add(User(id=value, username=value, password_hash="unused", role="user"))
+        await db.flush()
+        db.add(UserModelCredential(id=value, user_id=value, provider_id="test", base_url="https://api.deepseek.com",
+                                   encrypted_key=config()["encrypted_key"], version=1))
     return value
 
 
@@ -176,7 +179,7 @@ def test_finished_probe_cannot_change_the_next_probe_generation(monkeypatch, pro
 async def test_quota_reserves_input_and_maximum_output_before_send(database, monkeypatch):
     owner = await user(database)
     monkeypatch.setattr(settings, "TOKEN_QUOTA_PER_USER", 1000)
-    cfg = {**config(), "_input_budget": 200, "_output_budget": 700}
+    cfg = {**config(), "credential_owner_id": owner, "user_provider_id": owner, "_input_budget": 200, "_output_budget": 700}
     first = await guard.reserve(database.sessions, cfg, {"user_id": owner})
     with pytest.raises(PlatformError) as failure:
         await guard.reserve(database.sessions, cfg, {"user_id": owner})
@@ -192,7 +195,7 @@ async def test_quota_reserves_input_and_maximum_output_before_send(database, mon
 async def test_recovery_releases_only_definitely_unsent_token_reservations(database, monkeypatch, sent):
     owner = await user(database)
     monkeypatch.setattr(settings, "TOKEN_QUOTA_PER_USER", 1000)
-    cfg = {**config(), "_input_budget": 200, "_output_budget": 700}
+    cfg = {**config(), "credential_owner_id": owner, "user_provider_id": owner, "_input_budget": 200, "_output_budget": 700}
     call_id = await guard.reserve(database.sessions, cfg, {"user_id": owner})
     if sent:
         await guard.mark_sent(database.sessions, call_id)
@@ -227,7 +230,7 @@ async def test_partial_stream_deadline_is_audited_unknown_and_blocks_new_attempt
     from tests.test_platform_runtime import SDK, SDKStream, chunk, configuration
 
     owner = await user(database)
-    cfg = {**configuration(), "encrypted_key": config()["encrypted_key"]}
+    cfg = {**configuration(), "credential_owner_id": owner, "user_provider_id": owner, "encrypted_key": config()["encrypted_key"]}
     sdk_stream = SDKStream([chunk("partial"), chunk("not read")])
     sdk = SDK([sdk_stream])
     clock = [time.monotonic()]

@@ -55,7 +55,20 @@ class UserAISettings(Base):
     encrypted_key = Column(Text, nullable=False)
     vision = Column(Boolean, nullable=False, default=False)
     version = Column(Integer, nullable=False, default=1)
+    selection = Column(json_type, nullable=True)
     updated_at = Column(DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class UserModelCredential(Base):
+    __tablename__ = "platform_user_model_credentials"
+    __table_args__ = (UniqueConstraint("user_id", "provider_id", name="uq_platform_user_model_credential"),)
+
+    id = Column(String(36), primary_key=True, default=new_id)
+    user_id = Column(String(36), ForeignKey("platform_users.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider_id = Column(String(2100), nullable=False)
+    base_url = Column(Text, nullable=False)
+    encrypted_key = Column(Text, nullable=True)
+    version = Column(Integer, nullable=False, default=1)
 
 
 class LoginSession(Base):

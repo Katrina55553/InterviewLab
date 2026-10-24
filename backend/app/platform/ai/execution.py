@@ -174,7 +174,8 @@ async def complete(config, prompt, *, json_mode=True, resume=None, _nested=False
 
     async def invoke():
         for step in range(4):
-            kwargs = {"model": config["model"], "messages": messages, "max_tokens": settings.AI_MAX_OUTPUT_TOKENS}
+            kwargs = {"model": config["model"], "messages": messages,
+                      "max_tokens": min(settings.AI_MAX_OUTPUT_TOKENS, config.get("max_output_tokens", settings.AI_MAX_OUTPUT_TOKENS))}
             if available and step < 3:
                 kwargs["tools"] = available
             async def send(kwargs=kwargs):
@@ -223,7 +224,8 @@ async def stream_chat(config, messages):
                *[{**m, "content": mask_raw_text(m["content"])} for m in messages]]
     available = [t for t in get_tools() if t["function"]["name"] in config.get("tools", [])]
     for step in range(4):
-        kwargs = {"model": config["model"], "messages": history, "max_tokens": settings.AI_MAX_OUTPUT_TOKENS,
+        kwargs = {"model": config["model"], "messages": history,
+                  "max_tokens": min(settings.AI_MAX_OUTPUT_TOKENS, config.get("max_output_tokens", settings.AI_MAX_OUTPUT_TOKENS)),
                   "stream": True, "stream_options": {"include_usage": True}}
         if available and step < 3:
             kwargs["tools"] = available

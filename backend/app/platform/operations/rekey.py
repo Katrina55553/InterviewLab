@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.database import async_session_maker
-from app.platform.models import ConfigRevision, Interview, Provider, Resume
+from app.platform.models import ConfigRevision, Interview, Provider, Resume, UserAISettings, UserModelCredential
 
 
 def cipher(secret):
@@ -34,9 +34,10 @@ async def reencrypt(old_secret, new_secret):
     # Run with all application writers stopped and a verified backup.
     # One failure rolls back every encrypted field, including old frozen credentials.
     async with async_session_maker() as db, db.begin():
-        for row in (await db.scalars(select(Provider).with_for_update())).all():
-            if row.encrypted_key:
-                row.encrypted_key = new.encrypt(old.decrypt(row.encrypted_key.encode())).decode()
+        for model in (Provider, UserAISettings, UserModelCredential):
+            for row in (await db.scalars(select(model).with_for_update())).all():
+                if row.encrypted_key:
+                    row.encrypted_key = new.encrypt(old.decrypt(row.encrypted_key.encode())).decode()
         for model, field in ((ConfigRevision, "config"), (Interview, "config_snapshot"), (Resume, "config_snapshot")):
             for row in (await db.scalars(select(model).with_for_update())).all():
                 setattr(row, field, transform(copy.deepcopy(getattr(row, field)), old, new))

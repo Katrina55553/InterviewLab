@@ -283,7 +283,7 @@ async def _reply_stream(claim: StreamClaim):
             state["content"] = delta
             yield _sse("delta", {"content": delta})
         else:
-            config = (await freeze_configs(claim.agent_id))["chat"]
+            config = (await freeze_configs(claim.agent_id, user_id=claim.user_id))["chat"]
             async def fence():
                 if lost.is_set() or not await _checkpoint(claim, state["content"]):
                     raise PlatformError("STATE_CONFLICT", "当前回复执行权已失效", status=409, outcome="unknown")

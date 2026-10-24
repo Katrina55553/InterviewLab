@@ -15,7 +15,7 @@ from openai import APIConnectionError
 from app.platform import runtime
 from app.platform.ai import execution, guard
 from app.platform.contracts import PlatformError
-from app.platform.models import Agent, Provider
+from app.platform.models import Agent, UserAISettings, UserModelCredential
 
 
 def usage(prompt, completion):
@@ -312,8 +312,16 @@ async def test_cancelled_completion_records_interruption_without_retry(monkeypat
 
 
 class ConfigSession:
-    def __init__(self, agents, providers):
-        self.rows = deque([agents, providers])
+    def __init__(self, agents, *, vision=False, configured=True):
+        self.agents = agents
+        selection = {"connectionType": "custom", "authMethod": "api-key",
+                     "providerId": "custom:https://api.deepseek.com/v1", "modelId": "model-v1",
+                     "custom": {"baseUrl": "https://api.deepseek.com/v1", "api": "openai-completions",
+                                "model": {"input": ["text", "image"] if vision else ["text"],
+                                          "reasoning": False, "contextWindow": 8192, "maxTokens": 2048}}}
+        self.personal = UserAISettings(user_id="owner", vision=vision, version=2, selection=selection) if configured else None
+        self.credential = UserModelCredential(id="personal-connection", user_id="owner", version=2,
+            provider_id=selection["providerId"], base_url="https://api.deepseek.com/v1", encrypted_key="encrypted-test-key")
 
     async def __aenter__(self):
         return self
@@ -322,13 +330,13 @@ class ConfigSession:
         return None
 
     async def scalars(self, statement):
-        rows = self.rows.popleft()
-        return SimpleNamespace(all=lambda: rows)
+        return SimpleNamespace(all=lambda: self.agents)
 
+    async def get(self, model, key):
+        return self.personal
 
-def provider(identifier, *, vision=False, enabled=True):
-    return Provider(id=identifier, name=identifier, base_url="https://provider.invalid/v1", model="model-v1",
-                    encrypted_key="encrypted-test-key", vision=vision, enabled=enabled, version=2)
+    async def scalar(self, statement):
+        return self.credential
 
 
 @pytest.mark.asyncio
@@ -337,61 +345,55 @@ async def test_retired_tools_in_stored_agents_are_filtered_without_mutating_rows
 
     agent = Agent(id="old-agent", name="Old agent", scene="chat", enabled=True, version=1,
                   tools=["retired_tool", "lookup_resume_field"])
-    monkeypatch.setattr(runtime, "async_session_maker", lambda: ConfigSession([agent], []))
-    config = (await runtime.freeze_configs())["chat"]
+    monkeypatch.setattr(runtime, "async_session_maker", lambda: ConfigSession([agent]))
+    config = (await runtime.freeze_configs(user_id="owner"))["chat"]
     assert config["tools"] == ["lookup_resume_field"]
     assert agent_json(agent)["tools"] == ["lookup_resume_field"]
     assert agent.tools == ["retired_tool", "lookup_resume_field"]
 
 
 @pytest.mark.asyncio
-async def test_frozen_vision_selects_enabled_image_provider_and_copies_version(monkeypatch):
-    selected = provider("enabled-vision", vision=True)
-    providers = [provider("text-model"), provider("disabled-vision", vision=True, enabled=False), selected]
-    monkeypatch.setattr(runtime, "async_session_maker", lambda: ConfigSession([], providers))
-    monkeypatch.setattr(runtime.settings, "LLM_API_KEY", "")
-    configs = await runtime.freeze_configs()
-    assert configs["vision"]["provider_id"] == selected.id
+async def test_frozen_vision_copies_personal_credentials_and_version(monkeypatch):
+    session = ConfigSession([], vision=True)
+    monkeypatch.setattr(runtime, "async_session_maker", lambda: session)
+    configs = await runtime.freeze_configs(user_id="owner")
+    assert configs["vision"]["user_provider_id"] == session.credential.id
+    assert configs["vision"]["provider_id"] is None
     assert configs["vision"]["enabled"] is True
     assert configs["vision"]["provider_version"] == 2
     assert configs["vision"]["encrypted_key"] == "encrypted-test-key"
-    selected.model, selected.version = "changed-after-freeze", 3
-    assert configs["vision"]["model"] == "model-v1"
+    session.credential.encrypted_key, session.credential.version = "changed-after-freeze", 3
+    assert configs["vision"]["encrypted_key"] == "encrypted-test-key"
     assert configs["vision"]["provider_version"] == 2
 
 
 @pytest.mark.asyncio
-async def test_disabled_vision_agent_prevents_fallback_to_another_provider(monkeypatch):
-    providers = [provider("bound-vision", vision=True), provider("another-vision", vision=True)]
+async def test_disabled_vision_agent_prevents_personal_vision_calls(monkeypatch):
     disabled = Agent(id="vision-agent", name="disabled", scene="vision", enabled=False,
-                     provider_id="bound-vision", prompt="frozen prompt", tools=[], version=4)
-    monkeypatch.setattr(runtime, "async_session_maker", lambda: ConfigSession([disabled], providers))
-    monkeypatch.setattr(runtime.settings, "LLM_API_KEY", "")
-    config = (await runtime.freeze_configs())["vision"]
+                     prompt="frozen prompt", tools=[], version=4)
+    monkeypatch.setattr(runtime, "async_session_maker", lambda: ConfigSession([disabled], vision=True))
+    config = (await runtime.freeze_configs(user_id="owner"))["vision"]
     assert config["enabled"] is False
-    assert config["provider_id"] == "bound-vision"
     assert config["agent_version"] == 4
     assert config["prompt"] == "frozen prompt"
 
 
 @pytest.mark.asyncio
-async def test_missing_vision_provider_does_not_fall_back_to_text_environment(monkeypatch):
-    monkeypatch.setattr(runtime, "async_session_maker", lambda: ConfigSession([], [provider("text-only")]))
+async def test_missing_personal_connection_never_falls_back_to_environment(monkeypatch):
+    monkeypatch.setattr(runtime, "async_session_maker", lambda: ConfigSession([], configured=False))
     monkeypatch.setattr(runtime.settings, "LLM_API_KEY", "test-environment-key")
-    config = (await runtime.freeze_configs())["vision"]
-    assert config["enabled"] is False
-    assert config["provider_id"] is None
+    monkeypatch.setattr(runtime.settings, "PLATFORM_DEMO_MODE", False)
+    with pytest.raises(PlatformError) as failure:
+        await runtime.freeze_configs(user_id="owner")
+    assert failure.value.code == "AI_CONFIGURATION_ERROR"
 
 
 @pytest.mark.asyncio
-async def test_explicit_vision_agent_cannot_enable_a_text_only_provider(monkeypatch):
-    text_provider = provider("text-only", vision=False)
+async def test_explicit_vision_agent_cannot_enable_a_text_only_personal_model(monkeypatch):
     agent = Agent(id="vision-agent", name="vision", scene="vision", enabled=True,
-                  provider_id=text_provider.id, prompt="image feedback", tools=[], version=1)
-    monkeypatch.setattr(runtime, "async_session_maker", lambda: ConfigSession([agent], [text_provider]))
-    monkeypatch.setattr(runtime.settings, "LLM_API_KEY", "")
-    config = (await runtime.freeze_configs())["vision"]
-    assert config["enabled"] is False
+                  prompt="image feedback", tools=[], version=1)
+    monkeypatch.setattr(runtime, "async_session_maker", lambda: ConfigSession([agent]))
+    assert (await runtime.freeze_configs(user_id="owner"))["vision"]["enabled"] is False
 
 
 @pytest.mark.asyncio

@@ -13,7 +13,7 @@ from app.core.config import settings
 from app.core.database import async_session_maker
 from app.platform.ai import guard
 from app.platform.contracts import PlatformError, trace_context, traced
-from app.platform.models import Agent, Provider
+from app.platform.models import Agent, UserAISettings
 
 logger = logging.getLogger(__name__)
 DIMENSIONS = ("professional", "project", "analysis", "logic", "completeness")
@@ -65,14 +65,18 @@ async def _mark_sent(call_id):
     await guard.mark_sent(async_session_maker, call_id)
 
 
-async def freeze_configs(agent_id: str | None = None) -> dict:
+async def freeze_configs(agent_id: str | None = None, *, user_id: str) -> dict:
     """Copy encrypted credentials/config versions so admin edits cannot alter a run."""
     from app.core.tools import get_tools
-    from app.platform.admin import encrypt_key
+    from app.platform.user_settings import ModelSelection, config_for
 
     async with async_session_maker() as db:
         agents = list((await db.scalars(select(Agent))).all())
-        providers = {p.id: p for p in (await db.scalars(select(Provider))).all()}
+        personal = await db.get(UserAISettings, user_id)
+        connection = await config_for(db, user_id, ModelSelection.model_validate(personal.selection)) if personal and personal.selection else None
+    if not connection and not settings.PLATFORM_DEMO_MODE:
+        raise PlatformError("AI_CONFIGURATION_ERROR", "请先在「AI 设置」中配置你自己的模型和 API Key", status=409,
+                            retry_policy="never")
     available_tools = {tool["function"]["name"] for tool in get_tools()}
     configs = {}
     for scene in SCENES:
@@ -81,12 +85,7 @@ async def freeze_configs(agent_id: str | None = None) -> dict:
             agent = next((a for a in agents if a.id == agent_id), None)
             if not agent or not agent.enabled:
                 raise AIError("所选 Agent 不可用")
-        provider = providers.get(agent.provider_id) if agent else None
-        if scene == "vision" and not agent:
-            provider = next((p for p in providers.values() if p.vision and p.enabled), None)
-        scene_enabled = (agent.enabled if agent else True) and (provider.enabled if provider else scene != "vision")
-        if scene == "vision":
-            scene_enabled = scene_enabled and provider is not None and provider.vision
+        scene_enabled = (agent.enabled if agent else True) and (scene != "vision" or bool(personal and personal.vision))
         configs[scene] = {
             "scene": scene,
             "agent_id": agent.id if agent else None,
@@ -97,13 +96,17 @@ async def freeze_configs(agent_id: str | None = None) -> dict:
                 if scene in ("questions", "evaluate", "chat") else []
             ),
             "enabled": scene_enabled,
-            "base_url": provider.base_url if provider else settings.LLM_BASE_URL,
-            "model": provider.model if provider else settings.LLM_MODEL,
-            "provider_id": provider.id if provider else None,
-            "provider_version": provider.version if provider else 0,
-            "encrypted_key": provider.encrypted_key if provider else (
-                encrypt_key(settings.LLM_API_KEY) if settings.LLM_API_KEY else None
-            ),
+            "base_url": connection["base_url"] if connection else "",
+            "model": connection["model"] if connection else "",
+            "provider_id": None,
+            "provider_version": connection["provider_version"] if connection else 0,
+            "user_provider_id": connection["user_provider_id"] if connection else None,
+            "credential_owner_id": user_id,
+            "encrypted_key": connection["encrypted_key"] if connection else None,
+            "auth_method": connection["auth_method"] if connection else "api-key",
+            "max_output_tokens": min(settings.AI_MAX_OUTPUT_TOKENS,
+                personal.selection["custom"]["model"]["maxTokens"] if personal and (personal.selection or {}).get("custom")
+                else settings.AI_MAX_OUTPUT_TOKENS),
         }
     return configs
 
@@ -117,13 +120,26 @@ def _client(config: dict) -> AsyncOpenAI:
 
     if not config.get("enabled", True):
         raise PlatformError("AI_CONFIGURATION_ERROR", "此业务场景已被管理员停用", retry_policy="never")
-    if not config.get("encrypted_key"):
-        raise PlatformError("AI_CONFIGURATION_ERROR", "尚未配置模型密钥，请由管理员配置，或显式开启演示模式", retry_policy="never")
+    if not config.get("encrypted_key") and config.get("auth_method") != "none":
+        raise PlatformError("AI_CONFIGURATION_ERROR", "请先在「AI 设置」中配置你自己的模型和 API Key", retry_policy="never")
+    if config.get("credential_owner_id"):
+        from app.platform.model_transport import validate_personal_url
+
+        try:
+            validate_personal_url(config["base_url"])
+        except ValueError as exc:
+            raise PlatformError("AI_CONFIGURATION_ERROR", str(exc), retry_policy="never") from exc
+    from app.platform.model_transport import model_http_client
+
     return AsyncOpenAI(
-        api_key=decrypt_key(config["encrypted_key"]),
+        api_key=decrypt_key(config.get("encrypted_key")) or "no-auth",
         base_url=config["base_url"],
         timeout=settings.AI_TIMEOUT_SECONDS,
         max_retries=0,
+        **({"http_client": model_http_client(config["base_url"], settings.AI_TIMEOUT_SECONDS,
+                                           anonymous=config.get("auth_method") == "none",
+                                           response_limit=config.get("response_limit", 8 * 1024 * 1024))}
+           if config.get("credential_owner_id") else {}),
     )
 
 
