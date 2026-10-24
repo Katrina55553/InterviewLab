@@ -41,6 +41,8 @@ npm run dev
 
 本地数据库连接使用 `localhost`，容器环境使用 `postgres`、`redis` 服务名。`CORS_ORIGINS` 必须列出实际浏览器地址（默认示例包含 8000、5173），WebSocket 同样检查来源。HTTPS 部署设置 `AUTH_COOKIE_SECURE=true`。密钥加密依赖 `SECRET_KEY`，修改该值后需要重新保存供应商 API Key，旧面试中的冻结凭据也将不可解密。
 
+Compose 中后端仅通过容器内网接收请求，设置 `FORWARDED_ALLOW_IPS=*` 信任代理头；公开入口 Nginx 覆盖 `X-Forwarded-For` 为连接的客户端 IP，避免登录限流把所有用户算作同一个代理地址，也避免客户端伪造该头绕过限流。不要为此后端直接发布公网端口。若 Nginx 前另有负载均衡器，须先配置 Nginx 的可信代理与真实 IP；本地直接运行 Uvicorn 仍使用其默认代理信任范围。
+
 开发重建必须显式执行，且仅允许 `ENVIRONMENT=development`：
 
 ```powershell
@@ -114,6 +116,8 @@ Outbox 与业务状态同事务提交，独立 dispatcher 发布 Celery 任务�
 动作支持 start/answer/skip/rephrase/end。默认五道主问题，每题最多两次追问；主动跳过主问题记零分，未提问的问题不计入均分。没有可评分回答时得分为空。雷达五维来自真实逐题评分，不从综合分反推。演示数据始终带 `demo` 标记。
 
 讯飞 ASR 需要开通实时转写大模型，配置 `XFYUN_APP_ID/API_KEY/API_SECRET`；浏览器发送 16kHz、单声道、16bit PCM，约 40ms 一帧。TTS 使用长文本任务创建/查询接口，音频下载后保存到私有 uploads 卷。仪态建议使用独立 vision 供应商及可选 vision Agent；配置在面试创建时冻结。
+
+TTS 同一面试和文本复用进行中或成功的任务。供应商明确拒绝或任务明确失败后，用户再次点击朗读会原子认领一次新尝试；并发点击不会重复合成。结果未知的请求不会自动重发，继续保留原状态。
 
 ## 检查与故障实验
 

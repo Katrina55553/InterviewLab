@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
@@ -271,20 +271,32 @@ async def create_tts(body: TTSRequest, user: User = Depends(current_user)) -> di
             MediaTask.text_hash == text_hash,
         ))).scalar_one_or_none()
         if task is not None:
-            return _tts_json(task)
-        task = MediaTask(id=new_id(), user_id=user.id, interview_id=body.interview_id, text_hash=text_hash)
-        db.add(task)
+            if task.status != "failed":
+                return _tts_json(task)
+            # Only an explicit new POST retries a definite failure. A conditional
+            # update allows one caller to claim it; unknown outcomes stay cached.
+            claimed = await db.execute(update(MediaTask).where(
+                MediaTask.id == task.id, MediaTask.status == "failed",
+            ).values(status="creating", provider_task_id=None, audio_path=None, error=None,
+                     created_at=utcnow()).execution_options(synchronize_session=False))
+            await db.commit()
+            await db.refresh(task)
+            if claimed.rowcount != 1:
+                return _tts_json(task)
+        else:
+            task = MediaTask(id=new_id(), user_id=user.id, interview_id=body.interview_id, text_hash=text_hash)
+            db.add(task)
+            try:
+                await db.commit()  # Record intent before making an external chargeable call.
+            except IntegrityError:
+                await db.rollback()
+                task = (await db.execute(select(MediaTask).where(
+                    MediaTask.user_id == user.id, MediaTask.interview_id == body.interview_id,
+                    MediaTask.text_hash == text_hash,
+                ))).scalar_one()
+                return _tts_json(task)
         try:
-            await db.commit()  # Record intent before making an external chargeable call.
-        except IntegrityError:
-            await db.rollback()
-            task = (await db.execute(select(MediaTask).where(
-                MediaTask.user_id == user.id, MediaTask.interview_id == body.interview_id,
-                MediaTask.text_hash == text_hash,
-            ))).scalar_one()
-            return _tts_json(task)
-        try:
-            result = await tts_request(TTS_CREATE, tts_create_body(app_id, body.text, voice, task.id), api_key, api_secret)
+            result = await tts_request(TTS_CREATE, tts_create_body(app_id, body.text, voice, new_id()), api_key, api_secret)
             if not result["provider_task_id"]:
                 raise ValueError("Provider task id missing")
             task.provider_task_id = result["provider_task_id"]

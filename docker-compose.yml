@@ -25,6 +25,9 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    environment:
+      # Only Nginx exposes a public port and it overwrites incoming forwarding headers.
+      FORWARDED_ALLOW_IPS: "*"
     volumes:
       - uploads:/app/uploads
     env_file:

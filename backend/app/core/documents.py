@@ -19,8 +19,25 @@ def _extract_text_pdf(file_path: str) -> str:
 def _extract_text_docx(file_path: str) -> str:
     """用 python-docx 提取 Word 文本"""
     from docx import Document
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    def paragraphs(container):
+        for block in container.iter_inner_content():
+            if isinstance(block, Paragraph):
+                if block.text.strip():
+                    yield block.text
+            elif isinstance(block, Table):
+                seen_cells = set()
+                for row in block.rows:
+                    for cell in row.cells:
+                        # Merged cells share the same XML element across grid positions.
+                        if cell._tc not in seen_cells:
+                            seen_cells.add(cell._tc)
+                            yield from paragraphs(cell)
+
     doc = Document(file_path)
-    return "\n".join(para.text for para in doc.paragraphs if para.text.strip())
+    return "\n".join(paragraphs(doc))
 
 
 def extract_text(file_path: str) -> str:
@@ -40,7 +57,7 @@ def mask_raw_text(text: str) -> str:
     """脱敏简历原文中的手机号、邮箱、身份证号（发送给 LLM 前调用）"""
     # 先处理身份证，避免其中的连续数字被手机号规则局部替换后漏脱敏。
     text = re.sub(
-        r"(\d{4})\d{10}(\d{4})",
+        r"(?<!\d)(\d{4})\d{10}(\d{3}[\dXx])(?!\d)",
         lambda m: m.group(1) + "**********" + m.group(2),
         text,
     )

@@ -5,6 +5,7 @@ x-backend: &backend
   image: ${TEST_BACKEND_IMAGE:-resumeagent-engineering-backend:local}
   build: ./backend
   environment: &test-env
+    FORWARDED_ALLOW_IPS: "*"
     DATABASE_URL: postgresql+asyncpg://postgres:test-only@postgres:5432/resume_agent_test
     REDIS_URL: redis://redis:6379/0
     CELERY_BROKER_URL: redis://redis:6379/1
