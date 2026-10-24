@@ -35,6 +35,8 @@ class Settings(BaseSettings):
         "https://dashscope.aliyuncs.com/compatible-mode/v1,https://api.moonshot.cn/v1,"
         "https://open.bigmodel.cn/api/paas/v4"
     )
+    USER_LLM_OAUTH_REDIRECT_URI: str = "http://127.0.0.1:8000/api/settings/ai/oauth/callback"
+    USER_LLM_OAUTH_CLIENT_ID: str = ""
 
     # 安全配置
     SECRET_KEY: str = Field(default="change-me-in-production", min_length=16)

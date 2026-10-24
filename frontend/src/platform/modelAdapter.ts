@@ -9,7 +9,19 @@ export interface AIConnectionState {
   allowed_base_urls: string[];
 }
 
-export function createUserModelAdapter(onDisconnect?: () => Promise<unknown>): ModelSettingsAdapter {
+export interface AIProvider extends ProviderSummary {
+  baseUrl?: string;
+  defaultModel?: string;
+}
+
+export interface OAuthAuthorization {
+  session_id: string;
+  authorization_url: string;
+  redirect_uri: string;
+  expires_in: number;
+}
+
+export function createUserModelAdapter(onDisconnect?: () => Promise<unknown>, onAuthorize?: (session: OAuthAuthorization) => void): ModelSettingsAdapter {
   return {
     listProviders: options => api<ProviderSummary[]>('/settings/ai/providers', { signal: options?.signal }),
     listModels: async options => filterModelsByCapabilities(
@@ -18,8 +30,16 @@ export function createUserModelAdapter(onDisconnect?: () => Promise<unknown>): M
     ),
     getAuthStatus: (providerId, signal) => api<AuthStatus>(`/settings/ai/auth?provider_id=${encodeURIComponent(providerId)}`, { signal }),
     connect: async (request, options) => {
+      if (request.authMethod === 'oauth') {
+        if (!onAuthorize) throw new AdapterError('capability', '请从 AI 设置页面发起订阅授权。');
+        const session = await api<OAuthAuthorization>('/settings/ai/oauth/start', {
+          method: 'POST', body: { providerId: request.providerId }, signal: options?.signal,
+        });
+        onAuthorize(session);
+        return { providerId: request.providerId, auth: { state: 'unconfigured', method: 'oauth' } };
+      }
       if (request.authMethod !== 'api-key' && request.authMethod !== 'none') {
-        throw new AdapterError('auth', '当前支持 API Key 和自定义接口，订阅登录暂未接入。');
+        throw new AdapterError('auth', '此认证方式暂不支持。');
       }
       return api('/settings/ai/connect', { method: 'POST', body: request, signal: options?.signal });
     },

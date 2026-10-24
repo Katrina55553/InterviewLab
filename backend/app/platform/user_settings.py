@@ -6,7 +6,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
@@ -14,11 +14,11 @@ from app.core.database import async_session_maker
 from app.platform.admin import encrypt_key
 from app.platform.auth import current_user
 from app.platform.contracts import PlatformError
+from app.platform.model_providers import api_key_providers, provider_url
 from app.platform.model_transport import allowed_urls, validate_personal_url
-from app.platform.models import User, UserAISettings, UserModelCredential, new_id
+from app.platform.models import User, UserAISettings, UserModelCredential, UserOAuthSession, new_id
 
 router = APIRouter(prefix="/settings/ai", tags=["personal-ai"])
-DEEPSEEK_URL = "https://api.deepseek.com"
 
 
 class StrictModel(BaseModel):
@@ -60,7 +60,7 @@ class CustomEndpoint(StrictModel):
 
 class ModelSelection(StrictModel):
     connectionType: Literal["builtin", "custom"]
-    authMethod: Literal["api-key", "none"]
+    authMethod: Literal["api-key", "none", "oauth"]
     providerId: str = Field(min_length=1, max_length=2100)
     modelId: str = Field(min_length=1, max_length=200)
     custom: CustomEndpoint | None = None
@@ -76,16 +76,21 @@ class ModelSelection(StrictModel):
     @model_validator(mode="after")
     def valid_selection(self):
         if self.connectionType == "builtin":
-            if (self.providerId != "deepseek" or self.authMethod != "api-key" or self.custom is not None
-                    or self.modelId not in {"deepseek-chat", "deepseek-reasoner"}):
+            if self.providerId == "openai" and self.authMethod == "oauth" and self.custom is None:
+                return self
+            if self.authMethod != "api-key" or self.custom is not None:
                 raise ValueError("请选择支持的服务商和模型")
-            validate_personal_url(DEEPSEEK_URL)
-        elif self.custom is None or self.providerId != "custom:" + self.custom.baseUrl:
+            provider_url(self.providerId)
+        elif self.authMethod == "oauth" or self.custom is None or self.providerId != "custom:" + self.custom.baseUrl:
             raise ValueError("自定义连接标识必须与服务地址匹配")
         return self
 
     def base_url(self):
-        return self.custom.baseUrl if self.custom else DEEPSEEK_URL
+        if self.authMethod == "oauth":
+            from app.platform.subscriptions import BASE_URL
+
+            return BASE_URL
+        return self.custom.baseUrl if self.custom else provider_url(self.providerId)
 
 
 class SaveSelection(StrictModel):
@@ -105,8 +110,10 @@ class ConnectRequest(StrictModel):
     def valid_request(self):
         if self.connectionType == "custom":
             ModelSelection.model_validate(self.model_dump(exclude={"apiKey"}))
-        elif self.providerId != "deepseek" or self.authMethod != "api-key" or self.custom or self.modelId:
-            raise ValueError("此服务商仅支持 API Key 认证")
+        else:
+            if self.authMethod != "api-key" or self.custom or self.modelId:
+                raise ValueError("此服务商仅支持 API Key 认证")
+            provider_url(self.providerId)
         if self.authMethod == "api-key" and not (self.apiKey or "").strip():
             raise ValueError("请填写 API Key")
         if self.authMethod == "none" and self.apiKey:
@@ -114,10 +121,14 @@ class ConnectRequest(StrictModel):
         return self
 
     def base_url(self):
-        return self.custom.baseUrl if self.custom else validate_personal_url(DEEPSEEK_URL)
+        return self.custom.baseUrl if self.custom else provider_url(self.providerId)
 
 
 def auth_json(credential):
+    if credential and credential.auth_method == "oauth":
+        from app.platform.subscriptions import auth_json as oauth_auth_json
+
+        return oauth_auth_json(credential)
     return {"state": "configured" if credential else "unconfigured",
             "method": "api-key" if credential and credential.encrypted_key else "none",
             "source": "个人连接" if credential else None}
@@ -134,11 +145,13 @@ async def config_for(db, user_id: str, selection: ModelSelection):
     if not credential or credential.base_url != selection.base_url() or (
             selection.authMethod == "api-key" and not credential.encrypted_key):
         raise HTTPException(409, "请先连接此服务商，再测试或保存")
+    if (selection.authMethod == "oauth") != (credential.auth_method == "oauth"):
+        raise HTTPException(409, "连接认证方式已更改，请重新选择模型")
     return {"scene": "chat", "enabled": True, "tools": [], "prompt": "",
             "base_url": credential.base_url, "model": selection.modelId,
-            "encrypted_key": credential.encrypted_key, "credential_owner_id": user_id,
+            "encrypted_key": None if selection.authMethod == "oauth" else credential.encrypted_key, "credential_owner_id": user_id,
             "user_provider_id": credential.id, "provider_id": None, "provider_version": credential.version,
-            "auth_method": selection.authMethod}
+            "auth_method": selection.authMethod, "oauth_scope": credential.oauth_scope}
 
 
 def settings_json(row):
@@ -154,14 +167,24 @@ async def read_settings(user: User = Depends(current_user)):
 
 @router.get("/providers")
 async def list_providers(_user: User = Depends(current_user)):
-    if DEEPSEEK_URL not in {url.rstrip("/") for url in allowed_urls()}:
-        return []
-    return [{"id": "deepseek", "name": "DeepSeek", "description": "预设模型；其他模型可使用自定义接口。",
-             "auth": {"apiKey": {"label": "DeepSeek API Key", "interactive": True}}}]
+    values = [{"id": "openai", "name": "ChatGPT", "description": "登录 ChatGPT 并授权使用订阅计划。",
+               "auth": {"oauth": {"label": "Continue with ChatGPT", "isSubscription": True}}}]
+    return values + api_key_providers()
 
 
 @router.get("/models")
 async def list_models(provider_id: str, _user: User = Depends(current_user)):
+    if provider_id == "openai":
+        from app.platform.subscription_client import list_models as subscription_models
+        from app.platform.subscriptions import BASE_URL
+
+        async with async_session_maker() as db:
+            credential = await credential_for(db, _user.id, provider_id)
+            if not credential or credential.auth_method != "oauth":
+                return []
+            config = {"user_provider_id": credential.id, "credential_owner_id": _user.id,
+                      "oauth_scope": credential.oauth_scope, "base_url": BASE_URL}
+        return await subscription_models(config, async_session_maker)
     if provider_id != "deepseek":
         return []
     # Conservative application presets, not the provider's live catalog or maximum context.
@@ -191,6 +214,7 @@ async def connect(body: ConnectRequest, user: User = Depends(current_user)):
             if bool(row.encrypted_key) != (body.authMethod == "api-key"):
                 row.id = new_id()
         row.encrypted_key = encrypt_key(body.apiKey.strip()) if body.authMethod == "api-key" else None
+        row.auth_method = body.authMethod
         row.base_url = base_url
         try:
             await db.flush()
@@ -226,6 +250,10 @@ async def save_selection(body: SaveSelection, user: User = Depends(current_user)
 @router.delete("/auth")
 async def disconnect(provider_id: str = Query(max_length=2100), user: User = Depends(current_user)):
     async with async_session_maker() as db, db.begin():
+        await db.get(User, user.id, with_for_update=True)
+        await db.execute(update(UserOAuthSession).where(UserOAuthSession.user_id == user.id,
+            UserOAuthSession.provider_id == provider_id, UserOAuthSession.status.in_(["pending", "exchanging"]))
+            .values(status="cancelled", encrypted_data=encrypt_key("{}")))
         credential = await credential_for(db, user.id, provider_id, lock=True)
         if credential:
             await db.delete(credential)
@@ -258,7 +286,8 @@ async def probe(selection: ModelSelection, user: User = Depends(current_user)):
     try:
         async with asyncio.timeout(15):
             with runtime.call_scope(user.id):
-                async with attempt(config, messages, time.monotonic() + 15, 1) as (client, state):
+                budget = settings.AI_MAX_OUTPUT_TOKENS if selection.authMethod == "oauth" else 1
+                async with attempt(config, messages, time.monotonic() + 15, budget) as (client, state):
                     result = await client.chat.completions.create(
                         model=selection.modelId, messages=messages, max_tokens=1, stream=False,
                     )

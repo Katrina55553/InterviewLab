@@ -104,6 +104,7 @@ async def freeze_configs(agent_id: str | None = None, *, user_id: str) -> dict:
             "credential_owner_id": user_id,
             "encrypted_key": connection["encrypted_key"] if connection else None,
             "auth_method": connection["auth_method"] if connection else "api-key",
+            "oauth_scope": connection.get("oauth_scope") if connection else None,
             "max_output_tokens": min(settings.AI_MAX_OUTPUT_TOKENS,
                 personal.selection["custom"]["model"]["maxTokens"] if personal and (personal.selection or {}).get("custom")
                 else settings.AI_MAX_OUTPUT_TOKENS),
@@ -118,6 +119,10 @@ def config_fingerprint(config: dict) -> str:
 def _client(config: dict) -> AsyncOpenAI:
     from app.platform.admin import decrypt_key
 
+    if config.get("auth_method") == "oauth":
+        from app.platform.subscription_client import SubscriptionClient
+
+        return SubscriptionClient(config)
     if not config.get("enabled", True):
         raise PlatformError("AI_CONFIGURATION_ERROR", "此业务场景已被管理员停用", retry_policy="never")
     if not config.get("encrypted_key") and config.get("auth_method") != "none":

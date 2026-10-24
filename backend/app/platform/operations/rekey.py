@@ -11,7 +11,15 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.database import async_session_maker
-from app.platform.models import ConfigRevision, Interview, Provider, Resume, UserAISettings, UserModelCredential
+from app.platform.models import (
+    ConfigRevision,
+    Interview,
+    Provider,
+    Resume,
+    UserAISettings,
+    UserModelCredential,
+    UserOAuthSession,
+)
 
 
 def cipher(secret):
@@ -38,6 +46,8 @@ async def reencrypt(old_secret, new_secret):
             for row in (await db.scalars(select(model).with_for_update())).all():
                 if row.encrypted_key:
                     row.encrypted_key = new.encrypt(old.decrypt(row.encrypted_key.encode())).decode()
+        for row in (await db.scalars(select(UserOAuthSession).with_for_update())).all():
+            row.encrypted_data = new.encrypt(old.decrypt(row.encrypted_data.encode())).decode()
         for model, field in ((ConfigRevision, "config"), (Interview, "config_snapshot"), (Resume, "config_snapshot")):
             for row in (await db.scalars(select(model).with_for_update())).all():
                 setattr(row, field, transform(copy.deepcopy(getattr(row, field)), old, new))

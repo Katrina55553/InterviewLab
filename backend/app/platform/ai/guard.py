@@ -116,6 +116,10 @@ class Circuit:
 def credential_scope(config):
     from app.platform.admin import decrypt_key
 
+    if config.get("auth_method") == "oauth":
+        if not config.get("oauth_scope"):
+            raise PlatformError("AI_CONFIGURATION_ERROR", "订阅授权信息缺失，请重新连接", retry_policy="never")
+        return hmac.new(settings.SECRET_KEY.encode(), ("oauth:" + config["oauth_scope"]).encode(), hashlib.sha256).hexdigest()
     if config.get("auth_method") == "none":
         return hmac.new(settings.SECRET_KEY.encode(), ("anonymous:" + config["base_url"]).encode(), hashlib.sha256).hexdigest()
     try:
@@ -136,7 +140,7 @@ def circuit(config):
                 break
         else:
             raise PlatformError("AI_OVERLOADED", "模型配置容量已满，本次未发送")
-    credentials = credential_scope(config) if config.get("encrypted_key") else "unconfigured"
+    credentials = credential_scope(config) if config.get("encrypted_key") or config.get("auth_method") == "oauth" else "unconfigured"
     key = (config.get("base_url"), config.get("model"), credentials, config.get("provider_version"))
     return _circuits.setdefault(key, Circuit())
 

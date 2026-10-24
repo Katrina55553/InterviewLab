@@ -81,6 +81,52 @@ async def test_authentication_csrf_and_secret_only_crosses_connect_boundary(pers
 
 
 @pytest.mark.asyncio
+async def test_named_providers_resolve_and_freeze_their_own_endpoints(personal_client):
+    client, database = personal_client
+    owner = await register(client)
+    expected = {
+        "deepseek": "https://api.deepseek.com", "openai-api": "https://api.openai.com/v1",
+        "openrouter": "https://openrouter.ai/api/v1", "siliconflow": "https://api.siliconflow.cn/v1",
+        "dashscope": "https://dashscope.aliyuncs.com/compatible-mode/v1", "moonshot": "https://api.moonshot.cn/v1",
+        "bigmodel": "https://open.bigmodel.cn/api/paas/v4",
+    }
+    providers = (await client.get("/api/settings/ai/providers")).json()
+    assert {provider["id"]: provider["baseUrl"] for provider in providers if "apiKey" in provider["auth"]} == expected
+    assert next(provider for provider in providers if provider["id"] == "openai")["auth"].keys() == {"oauth"}
+    for version, (provider_id, base_url) in enumerate(expected.items()):
+        connection = {"connectionType": "builtin", "authMethod": "api-key", "providerId": provider_id}
+        result = await client.post("/api/settings/ai/connect", json={**connection, "apiKey": f"private-{provider_id}"})
+        assert result.status_code == 200, result.text
+        assert f"private-{provider_id}" not in result.text
+        selection = {**connection, "modelId": "account-model"}
+        result = await save(client, version, selection)
+        assert result.status_code == 200 and result.json()["selection"] == selection, result.text
+        frozen = await runtime.freeze_configs(user_id=owner)
+        assert all(config["base_url"] == base_url for config in frozen.values())
+        assert decrypt_key(frozen["chat"]["encrypted_key"]) == f"private-{provider_id}"
+    async with database.sessions() as db:
+        assert await db.scalar(select(func.count()).select_from(UserModelCredential)) == len(expected)
+
+
+@pytest.mark.asyncio
+async def test_provider_directory_enforces_allowlist_and_authentication_type(personal_client, monkeypatch):
+    client, _ = personal_client
+    await register(client)
+    monkeypatch.setattr(settings, "USER_LLM_ALLOWED_BASE_URLS", "https://openrouter.ai/api/v1")
+    providers = (await client.get("/api/settings/ai/providers")).json()
+    assert [provider["id"] for provider in providers] == ["openai", "openrouter"]
+    connection = {"connectionType": "builtin", "authMethod": "api-key", "providerId": "openrouter", "apiKey": "private-key"}
+    assert (await client.post("/api/settings/ai/connect", json=connection)).status_code == 200
+    for provider_id in ("deepseek", "openai-api", "unknown", "openai"):
+        assert (await client.post("/api/settings/ai/connect", json={**connection, "providerId": provider_id})).status_code == 422
+    assert (await client.post("/api/settings/ai/connect", json={**connection, "baseUrl": "https://untrusted.example/v1"})).status_code == 422
+    assert (await save(client, selection={**SELECTION, "providerId": "openai-api", "authMethod": "oauth"})).status_code == 422
+    monkeypatch.setattr(settings, "USER_LLM_ALLOWED_BASE_URLS", "https://api.deepseek.com/v1")
+    providers = (await client.get("/api/settings/ai/providers")).json()
+    assert next(provider for provider in providers if provider["id"] == "deepseek")["baseUrl"] == "https://api.deepseek.com/v1"
+
+
+@pytest.mark.asyncio
 async def test_credentials_and_selection_are_account_scoped(personal_client):
     client, _ = personal_client
     owner = await register(client)

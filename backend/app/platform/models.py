@@ -69,6 +69,30 @@ class UserModelCredential(Base):
     base_url = Column(Text, nullable=False)
     encrypted_key = Column(Text, nullable=True)
     version = Column(Integer, nullable=False, default=1)
+    auth_method = Column(String(16), nullable=False, default="api-key")
+    oauth_scope = Column(String(64), nullable=True)
+    refresh_owner = Column(String(36), nullable=True)
+    refresh_until = Column(DateTime, nullable=True)
+
+
+class UserOAuthHost(Base):
+    __tablename__ = "platform_user_oauth_hosts"
+
+    user_id = Column(String(36), ForeignKey("platform_users.id", ondelete="CASCADE"), primary_key=True)
+    host_id = Column(String(36), nullable=False, default=new_id)
+
+
+class UserOAuthSession(Base):
+    __tablename__ = "platform_user_oauth_sessions"
+
+    id = Column(String(36), primary_key=True, default=new_id)
+    user_id = Column(String(36), ForeignKey("platform_users.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider_id = Column(String(64), nullable=False)
+    state_hash = Column(String(64), nullable=False, unique=True)
+    status = Column(String(20), nullable=False, default="pending")
+    encrypted_data = Column(Text, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
 
 
 class LoginSession(Base):

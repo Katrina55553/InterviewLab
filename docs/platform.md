@@ -53,16 +53,31 @@ python -m app.platform.cli reset-dev --confirm RESET-PLATFORM
 
 ## 个人模型连接
 
-所有登录账户均可使用侧栏「AI 设置」。页面复用 Model Connection Kit 0.1.0，前端包随仓库保存在 `frontend/vendor/`，宿主适配器通过鉴权 API 访问后端。
+所有登录账户均可使用侧栏「AI 设置」。页面提供「ChatGPT 订阅登录」和「API Key」两个入口。订阅复用 Model Connection Kit 0.1.0，前端包随仓库保存在 `frontend/vendor/`；API Key 使用宿主表单，统一通过鉴权适配器访问后端。
 
 - 「连接」将 API Key 单向提交并加密保存，仅更新当前账户的认证；返回值不包含原文或加密密钥。「保存」单独持久化不含秘密的模型选择；刷新页面可恢复。
 - 「测试连接」发送固定提示词、最多生成 1 Token，15 秒截止，不自动重试、不写入用户聊天，也不自动保存模型选择。测试可能计费，并使用现有调用频率、Token 预留和审计控制。
-- 内置 DeepSeek 提供预设模型 ID；自定义接口可填写实际模型 ID、输入能力和输出上限。当前支持 API Key 和自定义接口，订阅/OAuth 登录尚未接入。
+- 「API Key」页可选择 DeepSeek、OpenAI、OpenRouter、硅基流动、阿里云百炼、Moonshot（Kimi）和智谱 AI，服务地址由服务端目录自动填入。填写账户可调用的模型 ID，再连接、测试并保存；DeepSeek 提供模型 ID 建议。服务商目录只显示已在 `USER_LLM_ALLOWED_BASE_URLS` 开放的地址，前端不能覆盖内置地址。OpenAI API Key 使用独立的 `openai-api` 凭据，与 `openai` 的 ChatGPT 订阅互不覆盖。
+- 自定义接入入口暂不开放；后端保留已有自定义配置的读取和运行兼容。「ChatGPT 订阅登录」使用官方 Sign in with ChatGPT 授权与公共 Responses API；其他订阅服务尚未接入。
 - 用户配置按账户隔离。聊天每次回复读取该用户当前选择；新简历诊断和新面试冻结该用户的模型及加密凭据，后续修改不重写历史事实。未配置时明确提示，不回退到管理员模型或环境变量中的平台 Key。旧版平台凭据快照只允许读取历史，需重新创建诊断或面试才能继续 AI 调用。
 - 断开认证删除对应账户的凭据，并移除使用该认证的当前选择；已冻结的凭据也会在下一次调用准入时被拒绝。已发送给服务商的请求无法由本地撤回。
 - `USER_LLM_ALLOWED_BASE_URLS` 由服务端配置完整可信 Base URL，默认包含常见 OpenAI 兼容服务。仅 HTTPS/443，校验所有 DNS 结果为公网地址，固定请求 IP 并保留原域名 TLS 验证，不跟随重定向。局域网模型不能通过此公网代理接入。
 
 ASR/TTS 仍为单独的讯飞服务配置；个人 LLM Key 不等于讯飞凭据。管理员仍管理场景提示词、工具及停用策略。`SECRET_KEY` 重加密工具覆盖个人凭据和冻结快照。
+
+### ChatGPT 订阅登录
+
+先运行迁移 `python -m app.platform.cli migrate`。在「AI 设置 → ChatGPT 订阅登录」选择 ChatGPT 并点击「连接」，打开授权链接，明确同意使用 ChatGPT 计划。回调完成后页面会读取该账户的模型列表；仍需选择模型并点击「保存」。连接测试、诊断、面试和聊天均使用当前账户的订阅授权，不回退到平台 API Key。
+
+授权采用 PKCE S256、随机 state 与 OIDC nonce；数据库保存加密的一次性授权会话，10 分钟过期。服务端验证 ID token 签名、issuer、audience、有效期与 nonce，以及 `chatgpt.tokens.use.direct` 许可。access/refresh token 和 ID token 只在服务器加密保存；浏览器仅获得授权链接、会话状态与非秘密模型选择。重新登录复用已有注册的 client ID 和持久化 host ID。取消或断开会使未完成授权失效；断开后的冻结面试不能重新使用已删除的授权。
+
+默认 `USER_LLM_OAUTH_REDIRECT_URI=http://127.0.0.1:8000/api/settings/ai/oauth/callback`，使用官方 OSS 动态注册，不需要共享客户端密钥。本机运行时须使用该地址对应的服务端口。浏览器运行在其他设备时，127.0.0.1 不会访问远程服务器，可把授权结束后的完整回调地址粘贴到授权卡片中完成交换。公开网站部署可设置已注册的公开客户端 `USER_LLM_OAUTH_CLIENT_ID` 和其精确 HTTPS 回调地址；本项目不使用其他应用的私有客户端 ID。回调路由关闭 Nginx 访问日志，并在后端处理前清除日志中的查询串。外部反向代理也应避免记录该回调的查询参数。
+
+OAuth 刷新使用数据库租约串行处理；刷新不在数据库事务内等待网络，不覆盖同时发生的新登录或断开。冻结快照只持有授权记录标识与稳定作用域，不复制会轮换的 token。恢复快照不会触发模型调用。
+
+订阅调用使用 `https://api.openai.com/v1/responses`，每次发送完整上下文、`store=false` 和 `stream=true`；只收到 `response.completed` 才提交成功结果，失败或中断不会补造评分。工具调用转换为 Responses 的命名空间函数。当前官方订阅接口不接受 `max_output_tokens`，因此本地输出预算不作为上游硬上限；测试使用简短固定提示，实际订阅用量由供应商返回并审计，不能承诺恰好 1 Token。账户模型目录仅显示服务端可见项目，目录可见不等于推理权限已验证。
+
+离线测试使用签名的测试 ID token、隔离数据库和模拟 OAuth/Responses 上游，覆盖授权校验、账户归属、取消、重放、刷新及调用结果提交。真实账号授权和实际计划可用性需要部署后现场验收。协议依据：[官方授权说明](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)、[模型与推理](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)、[接口限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。
 
 ## GitHub 仓库统计
 
