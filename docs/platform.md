@@ -98,6 +98,20 @@ Outbox 与业务状态同事务提交，独立 dispatcher 发布 Celery 任务�
 
 ## 接口与配置
 
+### 面经社区页面
+
+登录后通过侧栏进入 `/community`。页面提供关键词与公司搜索、岗位方向和精确话题筛选、推荐/最新排序、分页、全文阅读、点赞、评论，以及支持 Markdown 预览的面经编辑器；移动端使用单列布局。点赞同时承担标记稍后回看的作用，统一使用「点赞」和「我的点赞」，没有独立收藏功能。
+
+社区数据由 PostgreSQL 持久化，迁移版本为 `20261024_0006`，不使用浏览器 localStorage/sessionStorage，不自动上传旧预览版的本机内容，也不预置模拟帖子或点赞数。发布后的面经与评论对所有登录用户可见，作者由服务端会话确定。点赞关系以 `(post_id, user_id)` 为唯一键，重复点赞/取消点赞不会累计错误计数；发布与评论使用客户端 UUID 支持相同内容重试。
+
+关闭编辑弹窗或点击「暂存关闭」会把未发布草稿保存到账号，草稿仅本人可见，其他设备登录后可继续编辑。草稿带版本校验，过期页面不能覆盖更新的草稿；保存失败会保留编辑窗口与内容。发布成功会清理匹配版本的草稿。所有写接口沿用 Cookie 会话和 CSRF 校验；读取失败不会回退到演示内容。
+
+接口为 `GET/POST /api/community/posts`、`GET /api/community/posts/{id}`、`PUT/DELETE /api/community/posts/{id}/like`、`GET/POST /api/community/posts/{id}/comments`、`GET/PUT /api/community/draft` 与 `GET /api/community/meta`。列表搜索、排序和分页在数据库执行，评论每页 30 条，统计来自实际帖子与点赞关系。
+
+部署时先重建后端镜像，运行 `docker compose run --rm migrate`，再更新 backend、frontend 和共用该后端镜像的 Worker/巡检服务，防止迁移版本检查不一致。
+
+### 现有平台接口
+
 - `/api/auth`：注册、登录、当前用户、退出。可撤销会话令牌只以摘要保存；修改请求携带 `X-CSRF-Token`，值来自 `ra_csrf` Cookie。
 - `/api/resumes`：上传、列表、准备结果、私有文件和失败重试。
 - `/api/interviews`：创建独立面试、列表、快照、命令、报告、事件及报告重试。

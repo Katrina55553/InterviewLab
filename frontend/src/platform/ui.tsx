@@ -1,8 +1,15 @@
 import type { ReactNode } from 'react';
 import Markdown from 'react-markdown';
 
-export function Icon({ name, size = 20 }: { name: 'arrow' | 'upload' | 'chat' | 'file' | 'spark' | 'settings' | 'mic' | 'camera' | 'volume' | 'close' | 'check' | 'clock' | 'plus' | 'menu' | 'sidebar' | 'logout' | 'clipboard' | 'scan' | 'briefcase' | 'headphones' | 'chevron' | 'star' | 'fork'; size?: number }) {
+export function Icon({ name, size = 20 }: { name: 'arrow' | 'upload' | 'chat' | 'file' | 'spark' | 'settings' | 'mic' | 'camera' | 'volume' | 'close' | 'check' | 'clock' | 'plus' | 'menu' | 'sidebar' | 'logout' | 'clipboard' | 'scan' | 'briefcase' | 'headphones' | 'chevron' | 'star' | 'fork' | 'search' | 'bookmark' | 'like' | 'pencil' | 'trend' | 'book' | 'filter'; size?: number }) {
   const paths = {
+    search: 'm21 21-5-5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z',
+    bookmark: 'M6 3h12v18l-6-4-6 4V3Z',
+    like: 'M7 10v11H3V10h4Zm0 1 5-8a2 2 0 0 1 2 2v4h5a2 2 0 0 1 2 2l-2 8a2 2 0 0 1-2 2H7',
+    pencil: 'm15 4 5 5M4 16 16 4a2 2 0 0 1 4 4L8 20l-5 1 1-5Z',
+    trend: 'm3 17 6-6 4 4 8-10m-6 0h6v6',
+    book: 'M12 5v16M3 3h5a4 4 0 0 1 4 3 4 4 0 0 1 4-3h5v16h-5a4 4 0 0 0-4 2 4 4 0 0 0-4-2H3V3Z',
+    filter: 'M3 6h18M6 12h12m-8 6h4',
     star: 'm12 3 2.78 5.63L21 9.54l-4.5 4.39 1.06 6.2L12 17.2l-5.56 2.93 1.06-6.2L3 9.54l6.22-.91L12 3Z',
     fork: 'M8 7v10m8-10v3a3 3 0 0 1-3 3H8M8 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm8 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM8 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z',
     sidebar: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm4 0v18',

@@ -1,5 +1,22 @@
 # 实施与验收记录
 
+## 2026-10-24 面经社区持久化与统一点赞
+
+面经、评论、点赞和私有草稿已接入 PostgreSQL；社区源码不再读写浏览器 localStorage/sessionStorage，移除内置示例帖子与独立收藏功能。「我的点赞」读取同一份点赞关系。迁移 `20261024_0006` 新增五张社区表，依赖 `0005` 的顺序迁移。
+
+| 检查 | 结果 |
+| --- | --- |
+| 社区后端专项 | **10 passed**：SQLite 与临时 PostgreSQL 16 各五项；覆盖 Cookie/CSRF、跨账号阅读、私有草稿版本、发布/评论重放、并发重复点赞、搜索与分页 |
+| 前端 Vitest / coverage | **51 passed / 7 files**；社区数据请求模块行覆盖率 100%，社区页面行覆盖率 92.85%；包含社区不访问浏览器存储的断言 |
+| Ruff / ESLint / TypeScript / Vite build | 通过，`frontend/dist/` 已更新 |
+| 本次发布基线完整后端回归 | **241 passed、64 skipped**；使用当前运行的后端代码加社区增量，未配置的其他真实数据库/Redis 分支按现有约定跳过；社区的 PostgreSQL 分支另已执行 |
+| 实际 Compose 联调 | 两个临时账号验证发布对其他账号可见、草稿互不可见、评论共享、重复点赞只记一次、取消后从「我的点赞」移除；浏览器刷新后点赞保持 |
+| 运行状态 | 数据库迁移完成；frontend/backend、准备/报告 Worker、outbox、inspector 均健康，`/health/ready` 返回 200；Beat 与 metrics 运行中 |
+
+工作区原有未提交的个人 AI 配置业务改动会使直接运行整个工作区回归出现 **15 failed、226 passed、64 skipped**。本次没有回退或修补这些改动，而是从已运行的 `resumeagent-backend:community-base-20261024` 构建隔离的社区增量镜像 `resumeagent-backend:community-20261024`，验证后更新本机 `resumeagent-backend:local`。发布包含社区接口与完整迁移元数据，个人 AI 配置业务逻辑未一并启用。以后直接从当前工作区重建后端前，应先解决这 15 项回归失败。
+
+临时 PostgreSQL 测试容器及两个 QA 账号和关联帖子、评论、点赞已清理；原平台账号和内容未删除。验收截图 `frontend/test-results/community-backend-verified.jpg` 展示的是清理前的临时联调记录。增量构建上下文和联调脚本保存在 Git 忽略的 `.test-work/community-release/` 与 `.test-work/community-*.py`，不包含真实用户密码或供应商凭据。
+
 ## 2026-10-24 文档解析、登录限流与语音重试修复
 
 本轮修复四项已复现缺陷：身份证脱敏覆盖末位 X/x；DOCX 按正文顺序提取表格、嵌套表格并避免合并单元格重复；Compose 内网后端信任经过 Nginx 覆盖的客户端 IP，避免所有用户共享代理的登录限流桶；明确失败的 TTS 任务可由新一次朗读请求原子认领重试，进行中、成功及未知结果仍复用原任务。无需数据库迁移。

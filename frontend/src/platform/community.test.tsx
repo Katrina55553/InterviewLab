@@ -1,0 +1,144 @@
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import type { Root } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CommunityPage } from './Community';
+import { useAuth } from './auth';
+import type { CommunityPost, CommunityDraft, CommunityComment } from './community-data';
+
+let container: HTMLDivElement;
+let root: Root;
+let posts: CommunityPost[];
+let draft: { draft: CommunityDraft | null; version: number };
+let comments: CommunityComment[];
+let liked: boolean;
+let failRead: boolean;
+let failWrite: boolean;
+const firstId = '11111111-1111-4111-8111-111111111111';
+const calls: { path: string; method: string; body?: Record<string, unknown> }[] = [];
+const cards = () => [...container.querySelectorAll('.community-post')];
+const button = (label: string) => {
+  const item = [...container.querySelectorAll('button')].find(element => element.textContent?.trim() === label || element.getAttribute('aria-label') === label);
+  if (!item) throw new Error(`Missing button: ${label}`);
+  return item;
+};
+const click = (label: string) => act(async () => { button(label).click() });
+const input = (selector: string, value: string) => act(async () => {
+  const element = container.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(selector)!;
+  const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(element, value);
+  element.dispatchEvent(new Event(element instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }));
+});
+const mount = (path = '/community') => act(async () => { root.render(<MemoryRouter initialEntries={[path]}><CommunityPage /></MemoryRouter>) });
+const submit = (selector: string) => act(async () => { container.querySelector<HTMLFormElement>(selector)!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) });
+const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
+
+beforeEach(() => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  Element.prototype.scrollIntoView = vi.fn();
+  HTMLDialogElement.prototype.showModal = function () { this.open = true };
+  HTMLDialogElement.prototype.close = function () { this.open = false };
+  useAuth.setState({ user: { id: 'user-a', username: '测试同学', role: 'user' }, loading: false });
+  calls.length = 0; failRead = false; failWrite = false; draft = { draft: null, version: 0 }; comments = []; liked = false;
+  posts = Array.from({ length: 7 }, (_, index) => ({ id: index === 0 ? firstId : `11111111-1111-4111-8111-${String(index).padStart(12, '0')}`, authorId: 'author', author: '分享者', title: `后端面试复盘 ${index}`, company: index < 2 ? '腾讯' : '测试公司', role: '后端工程师', direction: '后端开发', stage: '校招 · 一面', outcome: '持续复盘', tags: index < 2 ? ['Java'] : ['Python'], summary: '一段来自服务端的面经摘要', content: '## 面试背景\n这次面试围绕系统设计展开，需要补充具体的指标和验证过程。', createdAt: '2026-10-24T06:00:00Z', likes: 0, liked: false, commentCount: 0, featured: false }));
+  vi.stubGlobal('fetch', vi.fn(async (path: string, options?: RequestInit) => {
+    const url = new URL(path, 'http://test'); const method = options?.method ?? 'GET';
+    const body = options?.body ? JSON.parse(String(options.body)) : undefined;
+    calls.push({ path, method, body });
+    if ((method === 'GET' && failRead) || (method !== 'GET' && failWrite)) return json({ detail: '服务暂时不可用' }, 503);
+    const user = useAuth.getState().user!;
+    const view = (post: CommunityPost) => ({ ...post, liked: user.id === 'user-a' && post.id === firstId && liked, likes: post.id === firstId && liked ? 1 : 0, commentCount: comments.length });
+    if (url.pathname === '/api/community/meta') return json({ companies: ['腾讯', '测试公司'], topics: [{ tag: 'Java', count: 2 }], myPosts: posts.filter(post => post.authorId === user.id).length, myLikes: liked ? 1 : 0 });
+    if (url.pathname === '/api/community/draft') {
+      if (method === 'PUT') { const { version, ...data } = body; draft = { draft: data, version: version + 1 } }
+      return json(user.id === 'user-a' ? draft : { draft: null, version: 0 });
+    }
+    if (url.pathname === '/api/community/posts' && method === 'POST') {
+      const created = { ...body, authorId: user.id, author: user.username, summary: body.content, likes: 0, liked: false, commentCount: 0, featured: false, createdAt: '2026-10-24T07:00:00Z' } as CommunityPost;
+      posts.unshift(created); draft = { draft: null, version: 0 }; return json(created, 201);
+    }
+    if (url.pathname === '/api/community/posts') {
+      const filtered = posts.filter(post => (!url.searchParams.get('q') || [post.title, ...post.tags].join(' ').includes(url.searchParams.get('q')!)) && (!url.searchParams.get('company') || post.company === url.searchParams.get('company')) && (!url.searchParams.get('direction') || post.direction === url.searchParams.get('direction')) && (!url.searchParams.get('topic') || post.tags.includes(url.searchParams.get('topic')!)) && (url.searchParams.get('tab') !== 'liked' || (view(post).liked)) && (url.searchParams.get('tab') !== 'mine' || post.authorId === user.id));
+      const page = Math.min(Number(url.searchParams.get('page') ?? 1), Math.max(1, Math.ceil(filtered.length / 5)));
+      return json({ items: filtered.slice((page - 1) * 5, page * 5).map(view), total: filtered.length, page, pageSize: 5 });
+    }
+    const id = url.pathname.split('/')[4]; const post = posts.find(item => item.id === id);
+    if (!post) return json({ detail: '面经不存在' }, 404);
+    if (url.pathname.endsWith('/like')) { liked = method === 'PUT'; return json({ liked, likes: Number(liked) }) }
+    if (url.pathname.endsWith('/comments')) {
+      if (method === 'POST') { const item = { ...body, author: user.username, createdAt: '2026-10-24T08:00:00Z' }; comments.push(item); return json(item, 201) }
+      return json({ items: comments, total: comments.length, page: 1, hasMore: false });
+    }
+    return json(view(post));
+  }));
+  container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+});
+afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals() });
+
+describe('server-backed community', () => {
+  it('requests server pagination, search and exact topic filters', async () => {
+    await mount(); expect(cards()).toHaveLength(5);
+    await click('下一页'); expect(cards()).toHaveLength(2);
+    await input('[aria-label="搜索面经"]', 'Java'); expect(cards()).toHaveLength(2);
+    expect(calls.some(call => call.path.includes('q=Java') && call.path.includes('page=1'))).toBe(true);
+    await click('前端开发'); expect(cards()).toHaveLength(0);
+    expect(container.textContent).toContain('暂时没有找到相关面经');
+    await click('清除筛选'); await input('.community-company-select select', '腾讯'); expect(cards()).toHaveLength(2);
+    await act(async () => container.querySelector<HTMLButtonElement>('.community-topics button')!.click());
+    expect(calls.some(call => call.path.includes('topic=Java'))).toBe(true);
+  });
+  it('has a single like action and shows the account liked feed', async () => {
+    await mount(); expect(container.textContent).not.toContain('收藏');
+    await click('点赞：后端面试复盘 0');
+    expect(calls.some(call => call.method === 'PUT' && call.path.endsWith('/like'))).toBe(true);
+    await click('我的点赞'); expect(cards()).toHaveLength(1);
+    await click('取消点赞：后端面试复盘 0'); expect(cards()).toHaveLength(0);
+    expect(calls.some(call => call.method === 'DELETE' && call.path.endsWith('/like'))).toBe(true);
+  });
+  it('reads detail and shared comments and renders comment text safely', async () => {
+    await mount(`/community?post=${firstId}`);
+    expect(container.querySelector('.community-reader .rich-text h2')!.textContent).toBe('面试背景');
+    await input('#community-comment', '<script>example</script> 补充一个排查思路'); await submit('.community-comments form');
+    expect(container.querySelector('.community-comments article')!.textContent).toContain('<script>example</script>');
+    expect(container.querySelector('.community-comments script')).toBeNull();
+    expect(calls.some(call => call.method === 'POST' && call.path.endsWith('/comments'))).toBe(true);
+    await click('关闭弹窗'); expect(container.querySelector('dialog')).toBeNull();
+  });
+  it('saves drafts to the account and publishes through the API', async () => {
+    await mount(); await click('发布面经'); await input('.community-editor input', '我的面试复盘');
+    await click('暂存关闭'); expect(draft.draft?.title).toBe('我的面试复盘');
+    await click('发布面经'); expect(container.querySelector<HTMLInputElement>('.community-editor input')!.value).toBe('我的面试复盘');
+    await input('.community-form-grid input', '一家新公司'); await input('.community-form-grid label:nth-child(2) input', '后端工程师');
+    await input('#community-post-content', '## 我的复盘\n这次面试主要讨论了系统设计，下次准备时要补充观测指标和具体的故障恢复过程。');
+    await click('预览排版'); expect(container.querySelector('.community-markdown-preview h2')!.textContent).toBe('我的复盘');
+    await submit('.community-editor form');
+    expect(container.querySelector('dialog')).toBeNull(); expect(cards()).toHaveLength(1);
+    expect(cards()[0].textContent).toContain('我的面试复盘');
+    const published = calls.find(call => call.method === 'POST' && call.path === '/api/community/posts')!;
+    expect(published.body?.draftVersion).toBe(1); expect(published.body?.id).toBeTruthy();
+    expect(container.textContent).toContain('其他登录用户');
+  });
+  it('never reads or writes browser storage and isolates data when accounts change', async () => {
+    const read = vi.spyOn(Storage.prototype, 'getItem'); const write = vi.spyOn(Storage.prototype, 'setItem');
+    liked = true; await mount(); await click('我的点赞'); expect(cards()).toHaveLength(1);
+    await act(async () => useAuth.setState({ user: { id: 'user-b', username: '另一位用户', role: 'user' } }));
+    await click('我的点赞'); expect(cards()).toHaveLength(0);
+    expect(read).not.toHaveBeenCalled(); expect(write).not.toHaveBeenCalled();
+  });
+  it('reports failures without fake content or optimistic success', async () => {
+    failRead = true; await mount(); expect(cards()).toHaveLength(0);
+    expect(container.querySelector('[role="alert"]')!.textContent).toContain('服务暂时不可用');
+    failRead = false; await click('重新加载'); expect(cards()).toHaveLength(5);
+    failWrite = true; await click('点赞：后端面试复盘 0');
+    expect(container.querySelector('[role="alert"]')!.textContent).toContain('服务暂时不可用');
+    expect(container.querySelector('.community-feedback')!.textContent).toBe('');
+  });
+  it('keeps editor content open when server draft saving fails', async () => {
+    await mount(); await click('发布面经'); await input('.community-editor input', '不能丢失的草稿');
+    failWrite = true; await click('暂存关闭');
+    expect(container.querySelector('dialog[open]')).not.toBeNull();
+    expect(container.querySelector<HTMLInputElement>('.community-editor input')!.value).toBe('不能丢失的草稿');
+    expect(container.querySelector('[role="alert"]')!.textContent).toContain('服务暂时不可用');
+  });
+});

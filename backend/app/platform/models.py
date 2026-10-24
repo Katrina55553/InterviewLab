@@ -43,6 +43,21 @@ class User(Base):
     created_at = Column(DateTime, nullable=False, default=utcnow)
 
 
+class UserAISettings(Base):
+    """One private model connection per account; credentials never leave the server."""
+
+    __tablename__ = "platform_user_ai_settings"
+
+    user_id = Column(String(36), ForeignKey("platform_users.id", ondelete="CASCADE"), primary_key=True)
+    id = Column(String(36), nullable=False, unique=True, default=new_id)
+    base_url = Column(Text, nullable=False)
+    model = Column(String(200), nullable=False)
+    encrypted_key = Column(Text, nullable=False)
+    vision = Column(Boolean, nullable=False, default=False)
+    version = Column(Integer, nullable=False, default=1)
+    updated_at = Column(DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+
 class LoginSession(Base):
     __tablename__ = "platform_login_sessions"
 
@@ -325,3 +340,56 @@ class CircuitObservation(Base):
     state = Column(String(16), nullable=False)
     valid_until = Column(DateTime, nullable=False)
     last_seen = Column(DateTime, nullable=False)
+
+
+class CommunityPost(Base):
+    __tablename__ = "platform_community_posts"
+    __table_args__ = (Index("ix_platform_community_post_created", "created_at", "id"),)
+
+    id = Column(String(36), primary_key=True, default=new_id)
+    user_id = Column(String(36), ForeignKey("platform_users.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String(100), nullable=False)
+    company = Column(String(50), nullable=False, index=True)
+    role = Column(String(60), nullable=False)
+    direction = Column(String(24), nullable=False, index=True)
+    stage = Column(String(32), nullable=False)
+    outcome = Column(String(24), nullable=False)
+    content = Column(Text, nullable=False)
+    featured = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+
+
+class CommunityTag(Base):
+    __tablename__ = "platform_community_tags"
+
+    post_id = Column(String(36), ForeignKey("platform_community_posts.id", ondelete="CASCADE"), primary_key=True)
+    tag = Column(String(32), primary_key=True, index=True)
+
+
+class CommunityLike(Base):
+    __tablename__ = "platform_community_likes"
+
+    post_id = Column(String(36), ForeignKey("platform_community_posts.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(String(36), ForeignKey("platform_users.id", ondelete="CASCADE"), primary_key=True, index=True)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+
+
+class CommunityComment(Base):
+    __tablename__ = "platform_community_comments"
+    __table_args__ = (Index("ix_platform_community_comment_created", "post_id", "created_at", "id"),)
+
+    id = Column(String(36), primary_key=True, default=new_id)
+    post_id = Column(String(36), ForeignKey("platform_community_posts.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(String(36), ForeignKey("platform_users.id", ondelete="CASCADE"), nullable=False, index=True)
+    content = Column(String(2000), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+
+
+class CommunityDraft(Base):
+    __tablename__ = "platform_community_drafts"
+
+    user_id = Column(String(36), ForeignKey("platform_users.id", ondelete="CASCADE"), primary_key=True)
+    post_id = Column(String(36), nullable=False)
+    data = Column(json_type, nullable=False)
+    version = Column(Integer, nullable=False, default=1)
+    updated_at = Column(DateTime, nullable=False, default=utcnow)
