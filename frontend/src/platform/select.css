@@ -1,0 +1,110 @@
+/* Shared controls, including the Radix menus supplied by model-connection-kit. */
+.app-select-trigger,
+.mck-panel [role=combobox] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 13px;
+  border: 1px solid #dfe7df;
+  border-radius: 9px;
+  background: #fdfefd;
+  color: #354c3c;
+  font-family: inherit;
+  font-size: var(--type-label, 13px);
+  font-weight: 400;
+  line-height: 1.6;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .18s, background .18s, box-shadow .18s;
+}
+.app-select-trigger > span:first-child,
+.mck-panel [role=combobox] > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-select-trigger:not(:disabled):hover,
+.mck-panel [role=combobox]:not(:disabled):hover { border-color: #a4c3af; background: #fff; }
+.app-select-trigger[data-state=open],
+.mck-panel [role=combobox][data-state=open] { border-color: #7ca88a; box-shadow: 0 0 0 3px #0478570c; }
+.platform .app-select-trigger:focus-visible,
+.mck-panel [role=combobox]:focus-visible { outline: 2px solid #4b8766; outline-offset: 2px; }
+.app-select-trigger:disabled,
+.mck-panel [role=combobox]:disabled,
+fieldset:disabled .app-select-trigger { opacity: .48; cursor: not-allowed; background: #f4f6f3; }
+.app-select-trigger[data-placeholder] { color: #89958b; }
+.app-select-chevron,
+.mck-panel [role=combobox] > span:last-child { display: inline-flex; flex-shrink: 0; color: #7c9184; transition: transform .18s; }
+.app-select-chevron { transform: rotate(90deg); }
+.app-select-trigger[data-state=open] .app-select-chevron { transform: rotate(270deg); }
+.mck-panel [role=combobox]:not(.app-select-trigger)[data-state=open] > span:last-child { transform: rotate(180deg); }
+
+.app-select-content,
+[role=listbox][data-side] {
+  z-index: 60;
+  box-sizing: border-box;
+  width: var(--radix-select-trigger-width, auto);
+  min-width: var(--radix-select-trigger-width, 0);
+  max-width: calc(100vw - 24px);
+  max-height: min(320px, var(--radix-select-content-available-height, 320px));
+  overflow: hidden;
+  padding: 5px;
+  border: 1px solid #dde7df;
+  border-radius: 12px;
+  background: #fff;
+  color: #354c3c;
+  box-shadow: 0 12px 32px #203c2f14, 0 3px 8px #203c2f08;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: var(--type-label, 13px);
+  font-weight: 400;
+  line-height: 1.6;
+  transform-origin: var(--radix-select-content-transform-origin, top);
+  animation: app-select-in .14s ease-out;
+}
+.app-select-viewport { padding: 0; }
+.app-select-option,
+[role=listbox][data-side] [role=option] {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  margin: 2px 0;
+  padding: 8px 34px 8px 11px;
+  border-radius: 7px;
+  color: #506354;
+  line-height: 1.6;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+  outline: none;
+  cursor: pointer;
+  user-select: none;
+}
+.app-select-option[data-state=checked],
+[role=listbox][data-side] [role=option][data-state=checked] { background: #edf6f0; color: #12634f; font-weight: 500; }
+.app-select-option[data-highlighted],
+[role=listbox][data-side] [role=option][data-highlighted] { background: #f0f5f1; color: #12634f; box-shadow: inset 0 0 0 1px #dceadf; }
+.app-select-option[data-state=checked][data-highlighted],
+[role=listbox][data-side] [role=option][data-state=checked][data-highlighted] { background: #e4f1e9; }
+.app-select-option[data-disabled],
+[role=listbox][data-side] [role=option][data-disabled] { opacity: .42; pointer-events: none; }
+.app-select-indicator { position: absolute; right: 11px; display: flex; color: #18735e; }
+/* The embedded kit has no indicator slot, so give its selected option the same mark. */
+[role=listbox][data-side]:not(.app-select-content) [role=option][data-state=checked]::after { content: ''; position: absolute; right: 14px; width: 6px; height: 10px; border: solid #18735e; border-width: 0 1.6px 1.6px 0; transform: translateY(-2px) rotate(45deg); }
+.app-select-scroll { display: flex; align-items: center; justify-content: center; height: 22px; color: #7c9184; background: #fff; }
+.app-select-scroll > svg { transform: rotate(90deg); }
+.app-select-scroll-up > svg { transform: rotate(270deg); }
+
+.app-combobox { position: relative; min-width: 0; }
+.app-combobox-control { position: relative; }
+.platform .app-combobox.has-options input,
+.mck-panel .app-combobox.has-options input { padding-right: 40px; }
+.app-combobox-toggle { position: absolute; top: 1px; right: 1px; bottom: 1px; display: flex; align-items: center; justify-content: center; width: 36px; border: 0; border-radius: 0 8px 8px 0; color: #7c9184; background: transparent; cursor: pointer; }
+.app-combobox-toggle > svg { transform: rotate(90deg); }
+.app-combobox[data-state=open] .app-combobox-toggle > svg { transform: rotate(270deg); }
+.app-combobox-toggle:hover { color: #12634f; background: #edf6f0; }
+.app-combobox-menu { position: absolute; top: calc(100% + 6px); left: 0; width: 100%; overflow-y: auto; overscroll-behavior: contain; }
+.app-combobox-menu[data-placement=top] { top: auto; bottom: calc(100% + 6px); transform-origin: bottom; }
+
+@keyframes app-select-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .app-select-content,[role=listbox][data-side] { animation: none; }.app-select-chevron { transition: none; } }

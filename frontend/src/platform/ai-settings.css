@@ -51,12 +51,9 @@
 .ai-settings-page .mck-panel [role=tabpanel]:not([hidden]) { padding-top: 24px; gap: 20px; min-width: 0; }
 .ai-settings-page .mck-panel label { color: #506354; font-size: 12px; font-weight: 500; gap: 8px; min-width: 0; }
 .ai-settings-page .mck-panel input:not([type=checkbox]),
-.ai-settings-page .mck-panel select,
-.ai-settings-page .mck-panel [role=combobox] { min-width: 0; min-height: 44px; border-color: #dfe7df; border-radius: 9px; color: #354c3c; background: #fdfefd; font-family: inherit; font-size: 13px; font-weight: 400; padding: 10px 13px; }
-.ai-settings-page .mck-panel [role=combobox]:not(:disabled):hover { border-color: #a4c3af; background: #fff; }
+.ai-settings-page .mck-panel select { min-width: 0; min-height: 44px; border-color: #dfe7df; border-radius: 9px; color: #354c3c; background: #fdfefd; font-family: inherit; font-size: 13px; font-weight: 400; padding: 10px 13px; }
 .ai-settings-page .mck-panel input:not([type=checkbox]):focus,
-.ai-settings-page .mck-panel select:focus,
-.ai-settings-page .mck-panel [role=combobox]:focus-visible { outline: 2px solid #4b8766; outline-offset: 2px; border-color: #87b69d; box-shadow: none; }
+.ai-settings-page .mck-panel select:focus { outline: 2px solid #4b8766; outline-offset: 2px; border-color: #87b69d; box-shadow: none; }
 .ai-settings-page .mck-panel input[type=password] { letter-spacing: 2px; }
 .ai-settings-page .mck-panel input[type=checkbox] { width: 15px; min-height: 15px; height: 15px; accent-color: #047857; }
 .ai-settings-page .mck-panel fieldset { min-width: 0; }

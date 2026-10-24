@@ -92,6 +92,11 @@ async def test_named_providers_resolve_and_freeze_their_own_endpoints(personal_c
     }
     providers = (await client.get("/api/settings/ai/providers")).json()
     assert {provider["id"]: provider["baseUrl"] for provider in providers if "apiKey" in provider["auth"]} == expected
+    assert next(provider for provider in providers if provider["id"] == "deepseek")["defaultModel"] == "deepseek-flash"
+    models = (await client.get("/api/settings/ai/models?provider_id=deepseek")).json()
+    assert {model["id"]: model["name"] for model in models} == {
+        "deepseek-flash": "DeepSeek-V4.1-Flash", "deepseek-v4-pro": "DeepSeek-V4-Pro",
+    }
     assert next(provider for provider in providers if provider["id"] == "openai")["auth"].keys() == {"oauth"}
     for version, (provider_id, base_url) in enumerate(expected.items()):
         connection = {"connectionType": "builtin", "authMethod": "api-key", "providerId": provider_id}

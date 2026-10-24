@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { AISettingsPage } from './AISettings';
 import { createUserModelAdapter } from './modelAdapter';
 import type { AIConnectionState } from './modelAdapter';
+import { openSelect, selectOption } from '../test/select';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -12,10 +13,10 @@ let state: AIConnectionState;
 let connected: Set<string>;
 let subscriptionConnected: boolean;
 let authorizationStatus: string;
-const selection = { connectionType: 'builtin', authMethod: 'api-key', providerId: 'deepseek', modelId: 'deepseek-chat' } as const;
+const selection = { connectionType: 'builtin', authMethod: 'api-key', providerId: 'deepseek', modelId: 'deepseek-flash' } as const;
 const subscriptionSelection = { connectionType: 'builtin', authMethod: 'oauth', providerId: 'openai', modelId: 'account-model' } as const;
 const apiProviders = [
-  { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', defaultModel: 'deepseek-chat' },
+  { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', defaultModel: 'deepseek-flash' },
   { id: 'openai-api', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1' },
   { id: 'openrouter', name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1' },
   { id: 'siliconflow', name: '硅基流动', baseUrl: 'https://api.siliconflow.cn/v1' },
@@ -46,7 +47,7 @@ beforeEach(() => {
     if (url === '/api/settings/ai') return json(state);
     if (url === '/api/settings/ai/providers') return json([...apiProviders.map(provider => ({ ...provider, auth: { apiKey: { label: `${provider.name} API Key`, interactive: true } } })), { id: 'openai', name: 'ChatGPT', auth: { oauth: { label: 'Continue with ChatGPT', isSubscription: true } } }]);
     if (url === '/api/settings/ai/models?provider_id=openai') return json(subscriptionConnected ? [{ id: 'account-model', name: '账户模型', providerId: 'openai', input: ['text'], reasoning: false, contextWindow: 8192, maxTokens: 4096 }] : []);
-    if (url.startsWith('/api/settings/ai/models')) return json([{ id: 'deepseek-chat', name: 'deepseek-chat', providerId: 'deepseek', input: ['text'], reasoning: false, contextWindow: 8192, maxTokens: 4096 }]);
+    if (url.startsWith('/api/settings/ai/models')) return json([{ id: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash', providerId: 'deepseek', input: ['text'], reasoning: true, contextWindow: 8192, maxTokens: 4096 }]);
     if (url === '/api/settings/ai/connect') { const { providerId } = JSON.parse(options!.body as string); connected.add(providerId); return json({ providerId, auth: { state: 'configured', method: 'api-key' } }) }
     if (url === '/api/settings/ai/auth?provider_id=openai') return json({ state: subscriptionConnected ? 'configured' : 'unconfigured', method: 'oauth' });
     if (url.startsWith('/api/settings/ai/auth')) return json({ state: connected.has(new URL(url, 'http://test').searchParams.get('provider_id')!) ? 'configured' : 'unconfigured', method: 'api-key' });
@@ -84,35 +85,48 @@ it('keeps API Key authentication, probing and saved selection separate', async (
 it('restores a saved selection without requesting or displaying the secret', async () => {
   state = { ...state, selection, version: 2, has_key: true }; connected.add('deepseek');
   await act(async () => root.render(<AISettingsPage />)); await settle(); await settle();
-  expect(container.querySelector('.ai-current-connection')?.textContent).toContain('deepseek-chat');
+  expect(container.querySelector('.ai-current-connection')?.textContent).toContain('deepseek-flash');
   expect((container.querySelector('input[aria-label="API Key"]') as HTMLInputElement).value).toBe('');
   expect(vi.mocked(fetch).mock.calls.some(([url]) => url === '/api/settings/ai/probe')).toBe(false);
+});
+
+it.each(['deepseek-chat', 'deepseek-reasoner'])('replaces retired %s in the editor and only persists the replacement on save', async legacyModel => {
+  state = { ...state, selection: { ...selection, modelId: legacyModel }, version: 2, has_key: true }; connected.add('deepseek');
+  await act(async () => root.render(<AISettingsPage />)); await settle(); await settle();
+  const model = container.querySelector<HTMLInputElement>('input[aria-label="模型名称"]')!;
+  expect(model.value).toBe('DeepSeek-V4.1-Flash');
+  expect(state.selection?.modelId).toBe(legacyModel);
+  await act(async () => model.focus());
+  expect([...container.querySelectorAll('[role="option"]')].map(option => option.textContent)).toEqual(['DeepSeek-V4.1-Flash', 'DeepSeek-V4-Pro']);
+  expect(container.querySelector('.app-combobox small')).toBeNull();
+  await click('保存'); await settle();
+  expect(state.selection).toEqual(selection);
+  expect(container.querySelector<HTMLInputElement>('input[aria-label="模型名称"]')?.value).toBe('DeepSeek-V4.1-Flash');
 });
 
 it('fills each API Key endpoint and clears a draft key when the provider changes', async () => {
   await act(async () => root.render(<AISettingsPage />)); await settle(); await settle();
   expect(container.textContent).not.toContain('支持的自定义服务地址');
-  const service = container.querySelector('select[aria-label="服务商"]') as HTMLSelectElement;
-  expect([...service.options].map(option => option.text)).toEqual(apiProviders.map(provider => provider.name));
+  expect((await openSelect('服务商')).map(option => option.textContent)).toEqual(apiProviders.map(provider => provider.name));
+  await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) });
   for (const provider of apiProviders) {
-    await act(async () => { service.value = provider.id; service.dispatchEvent(new Event('change', { bubbles: true })) }); await settle();
+    await selectOption('服务商', provider.name); await settle();
     const address = container.querySelector('input[aria-label="服务地址"]') as HTMLInputElement;
     expect(address.value).toBe(provider.baseUrl); expect(address.readOnly).toBe(true);
   }
   const key = container.querySelector('input[aria-label="API Key"]') as HTMLInputElement;
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(key, 'provider-specific-secret'); key.dispatchEvent(new Event('input', { bubbles: true })) });
-  await act(async () => { service.value = 'openai-api'; service.dispatchEvent(new Event('change', { bubbles: true })) }); await settle();
+  await selectOption('服务商', 'OpenAI'); await settle();
   expect(key.value).toBe('');
-  expect((container.querySelector('input[aria-label="模型 ID"]') as HTMLInputElement).value).toBe('');
+  expect((container.querySelector('input[aria-label="模型名称"]') as HTMLInputElement).value).toBe('');
   expect(container.innerHTML).not.toContain('provider-specific-secret');
 });
 
 it('saves and restores an OpenAI API Key independently from ChatGPT subscription', async () => {
   await act(async () => root.render(<AISettingsPage />)); await settle(); await settle();
-  const service = container.querySelector('select[aria-label="服务商"]') as HTMLSelectElement;
-  await act(async () => { service.value = 'openai-api'; service.dispatchEvent(new Event('change', { bubbles: true })) }); await settle();
+  await selectOption('服务商', 'OpenAI'); await settle();
   const key = container.querySelector('input[aria-label="API Key"]') as HTMLInputElement;
-  const model = container.querySelector('input[aria-label="模型 ID"]') as HTMLInputElement;
+  const model = container.querySelector('input[aria-label="模型名称"]') as HTMLInputElement;
   await act(async () => {
     for (const [input, value] of [[key, 'openai-private-key'], [model, 'my-account-model']] as const) {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
@@ -123,7 +137,7 @@ it('saves and restores an OpenAI API Key independently from ChatGPT subscription
   expect(state.selection).toEqual({ connectionType: 'builtin', authMethod: 'api-key', providerId: 'openai-api', modelId: 'my-account-model' });
   expect(container.querySelector('.ai-current-connection')?.textContent).toContain('OpenAI · 个人连接');
   expect((container.querySelector('input[aria-label="服务地址"]') as HTMLInputElement).value).toBe('https://api.openai.com/v1');
-  expect((container.querySelector('select[aria-label="服务商"]') as HTMLSelectElement).value).toBe('openai-api');
+  expect(container.querySelector('[role="combobox"][aria-label="服务商"]')?.textContent).toBe('OpenAI');
   expect(subscriptionConnected).toBe(false);
   const requests = vi.mocked(fetch).mock.calls.filter(([url]) => url === '/api/settings/ai/connect');
   expect(JSON.parse(requests[0][1]!.body as string)).toEqual({ connectionType: 'builtin', authMethod: 'api-key', providerId: 'openai-api', apiKey: 'openai-private-key' });

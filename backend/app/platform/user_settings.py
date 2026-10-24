@@ -188,11 +188,11 @@ async def list_models(provider_id: str, _user: User = Depends(current_user)):
     if provider_id != "deepseek":
         return []
     # Conservative application presets, not the provider's live catalog or maximum context.
-    return [{"id": model, "providerId": "deepseek", "name": model,
+    return [{"id": model, "providerId": "deepseek", "name": name,
              "description": "预设 ID；展示应用默认预算，实际可用性请测试连接。",
-             "input": ["text"], "reasoning": model.endswith("reasoner"),
+             "input": ["text"], "reasoning": True,
              "contextWindow": 8192, "maxTokens": min(settings.AI_MAX_OUTPUT_TOKENS, 8192)}
-            for model in ("deepseek-chat", "deepseek-reasoner")]
+            for model, name in (("deepseek-flash", "DeepSeek-V4.1-Flash"), ("deepseek-v4-pro", "DeepSeek-V4-Pro"))]
 
 
 @router.get("/auth")

@@ -59,6 +59,7 @@ python -m app.platform.cli reset-dev --confirm RESET-PLATFORM
 - 「测试连接」发送固定提示词、最多生成 1 Token，15 秒截止，不自动重试、不写入用户聊天，也不自动保存模型选择。测试可能计费，并使用现有调用频率、Token 预留和审计控制。
 - 「API Key」页可选择 DeepSeek、OpenAI、OpenRouter、硅基流动、阿里云百炼、Moonshot（Kimi）和智谱 AI，服务地址由服务端目录自动填入。填写账户可调用的模型 ID，再连接、测试并保存；DeepSeek 提供模型 ID 建议。服务商目录只显示已在 `USER_LLM_ALLOWED_BASE_URLS` 开放的地址，前端不能覆盖内置地址。OpenAI API Key 使用独立的 `openai-api` 凭据，与 `openai` 的 ChatGPT 订阅互不覆盖。
 - 自定义接入入口暂不开放；后端保留已有自定义配置的读取和运行兼容。「ChatGPT 订阅登录」使用官方 Sign in with ChatGPT 授权与公共 Responses API；其他订阅服务尚未接入。
+- 模型 ID 是接口参数，不一定等于展示名称。DeepSeek 当前建议项为 `deepseek-flash`（DeepSeek-V4.1-Flash）和 `deepseek-v4-pro`（DeepSeek-V4-Pro），默认前者；输入框和建议项显示模型名称，提交时使用对应 ID。已保存的内置 DeepSeek 旧名称 `deepseek-chat` / `deepseek-reasoner` 在编辑时建议替换为 Flash，点击保存后才更新当前选择；历史任务快照不变。其他服务商的同名模型不受影响。依据 [DeepSeek 官方模型列表](https://api-docs.deepseek.com/api/list-models/)。
 - 用户配置按账户隔离。聊天每次回复读取该用户当前选择；新简历诊断和新面试冻结该用户的模型及加密凭据，后续修改不重写历史事实。未配置时明确提示，不回退到管理员模型或环境变量中的平台 Key。旧版平台凭据快照只允许读取历史，需重新创建诊断或面试才能继续 AI 调用。
 - 断开认证删除对应账户的凭据，并移除使用该认证的当前选择；已冻结的凭据也会在下一次调用准入时被拒绝。已发送给服务商的请求无法由本地撤回。
 - `USER_LLM_ALLOWED_BASE_URLS` 由服务端配置完整可信 Base URL，默认包含常见 OpenAI 兼容服务。仅 HTTPS/443，校验所有 DNS 结果为公网地址，固定请求 IP 并保留原域名 TLS 验证，不跟随重定向。局域网模型不能通过此公网代理接入。

@@ -74,9 +74,10 @@ try {
   await page.getByRole('heading', { name: '配置修订记录', exact: true }).waitFor({ state: 'hidden' });
   await page.screenshot({ path: resolve(output, '09-admin-providers.png'), fullPage: true });
   await page.getByRole('button', { name: '智能体配置', exact: true }).click();
-  assert.equal(await page.getByRole('combobox', { name: /^使用场景/ }).inputValue(), '');
+  assert.equal(await page.getByRole('combobox', { name: '使用场景', exact: true }).innerText(), '独立对话助手（用户自行选择）');
   await page.getByLabel('智能体名称', { exact: true }).fill(agentName);
-  await page.getByRole('combobox', { name: /^使用模型/ }).selectOption(provider.id);
+  await page.getByRole('combobox', { name: '使用模型', exact: true }).click();
+  await page.getByRole('option', { name: providerName, exact: true }).click();
   await page.getByLabel('系统提示词', { exact: true }).fill('帮助用户使用具体、可验证的事实描述项目经历。');
   await page.getByLabel('lookup_resume_field', { exact: true }).check();
   await page.getByLabel('启用此智能体', { exact: true }).uncheck();
@@ -86,8 +87,9 @@ try {
   assert.deepEqual(agent.tools, ['lookup_resume_field']);
   assert.equal(agent.enabled, false);
   await page.locator('.config-row').filter({ hasText: agentName }).getByRole('button', { name: '编辑', exact: true }).click();
-  assert.equal(await page.getByRole('combobox', { name: /^使用场景/ }).inputValue(), '');
-  await page.getByRole('combobox', { name: /^使用模型/ }).selectOption('');
+  assert.equal(await page.getByRole('combobox', { name: '使用场景', exact: true }).innerText(), '独立对话助手（用户自行选择）');
+  await page.getByRole('combobox', { name: '使用模型', exact: true }).click();
+  await page.getByRole('option', { name: '使用服务器默认模型', exact: true }).click();
   await page.getByLabel('启用此智能体', { exact: true }).check();
   const updatedAgent = await mutation('/api/admin/agents', () => page.getByRole('button', { name: '保存智能体', exact: true }).click());
   assert.equal(updatedAgent.provider_id, null);

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CommunityPage } from './Community';
 import { useAuth } from './auth';
 import type { CommunityPost, CommunityDraft, CommunityComment } from './community-data';
+import { selectOption } from '../test/select';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -84,7 +85,7 @@ describe('server-backed community', () => {
     expect(calls.some(call => call.path.includes('q=Java') && call.path.includes('page=1'))).toBe(true);
     await click('前端开发'); expect(cards()).toHaveLength(0);
     expect(container.textContent).toContain('暂时没有找到相关面经');
-    await click('清除筛选'); await input('.community-company-select select', '腾讯'); expect(cards()).toHaveLength(2);
+    await click('清除筛选'); await selectOption('筛选公司', '腾讯'); expect(cards()).toHaveLength(2);
     await act(async () => container.querySelector<HTMLButtonElement>('.community-topics button')!.click());
     expect(calls.some(call => call.path.includes('topic=Java'))).toBe(true);
   });

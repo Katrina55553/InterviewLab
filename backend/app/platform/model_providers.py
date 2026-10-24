@@ -4,7 +4,7 @@ from app.platform.model_transport import allowed_urls, validate_personal_url
 
 API_KEY_PROVIDERS = (
     {"id": "deepseek", "name": "DeepSeek", "urls": ("https://api.deepseek.com", "https://api.deepseek.com/v1"),
-     "defaultModel": "deepseek-chat"},
+     "defaultModel": "deepseek-flash"},
     {"id": "openai-api", "name": "OpenAI", "urls": ("https://api.openai.com/v1",)},
     {"id": "openrouter", "name": "OpenRouter", "urls": ("https://openrouter.ai/api/v1",)},
     {"id": "siliconflow", "name": "硅基流动", "urls": ("https://api.siliconflow.cn/v1",)},

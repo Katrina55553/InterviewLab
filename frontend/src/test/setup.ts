@@ -3,6 +3,9 @@
  */
 import { vi } from 'vitest'
 
+// Radix scrolls the highlighted option into view; jsdom has no layout engine.
+if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {}
+
 // jsdom 不实现 WebSocket，提供 mock
 class MockWebSocket {
   static CONNECTING = 0
