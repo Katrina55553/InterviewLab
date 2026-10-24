@@ -287,6 +287,8 @@ python -m pytest tests/test_platform_service.py tests/test_platform_media.py -q 
 
 2026-10-23 依赖升级验收：后端 **267 passed / 8 skipped**，前端 **44 passed**；lint、类型检查、覆盖率执行、生产构建，以及普通用户和管理员两套浏览器流程均通过。Python/npm 依赖审计未发现已知漏洞。后端实测使用隔离 PostgreSQL 18.3 / Redis 7.4.2，生产与 CI 仍配置 PostgreSQL 16 / Redis 7；本轮尚未验证升级后的 Docker 镜像构建、远端 CI 和真实供应商联调。完整环境及测试边界见[验收记录](docs/verification.md#2026-10-23-依赖与构建环境升级)。
 
+2026-10-24 已补齐升级后的 Docker 全栈复测：PostgreSQL **16.15** / Redis **7.4.11** 下，镜像构建、9 项故障恢复、两项容量目标、普通用户和管理员浏览器流程均通过。修正了容量探针在本机因反复创建 HTTP 客户端而漏过并发窗口的问题，保留原有门槛。首次 npm 审计发现的 `zod` 间接开发依赖 **1 项 High 已修复**：升级至 **4.6.7** 后，官方审计恢复 **0 漏洞**，前端 lint、44 项测试、覆盖率及生产构建均通过；真实供应商和远端发布仍需验收。详见[全栈记录](docs/verification.md#2026-10-24-docker-全栈复测)及[安全修复记录](docs/verification.md#2026-10-24-zod-安全修复)。
+
 ## 常用运维命令
 
 在仓库根目录执行：

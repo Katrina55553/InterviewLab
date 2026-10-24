@@ -1,5 +1,8 @@
 node_modules/
 dist/
+.test-work/
+test-results/
+coverage/
 *.log
 .env
 .env.*

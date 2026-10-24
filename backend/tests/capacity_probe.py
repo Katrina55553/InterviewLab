@@ -66,6 +66,9 @@ def main():
                      "docker_cpus": int(docker_cpu), "docker_memory_bytes": int(docker_memory)},
         "fixture_users": 10, "fixture_interviews": 1, "read_samples_per_phase": 30}
     with contextlib.ExitStack() as stack:
+        # Build the control-plane client before the burst: repeatedly loading
+        # the host TLS trust store can outlast the short in-flight window.
+        observer = stack.enter_context(httpx.Client(base_url=PROVIDER, timeout=5, trust_env=False))
         users = [stack.enter_context(client()) for _ in range(10)]
         chats = [checked(value.post("/api/chats", json={})) for value in users]
         run = interview(users[0])
@@ -74,12 +77,12 @@ def main():
         started = time.perf_counter()
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
             pending = [pool.submit(send, value, BASE if i % 2 else FAULTY, chat) for i, (value, chat) in enumerate(zip(users, chats, strict=True))]
-            wait_for(lambda: httpx.get(PROVIDER + "/control", trust_env=False).json()["inflight"], lambda n: n == 2, timeout=10)
+            wait_for(lambda: checked(observer.get("/control"))["inflight"], lambda n: n == 2, timeout=10)
             evidence["slow_provider_reads"] = measure_reads(users[0], run)
             evidence["resources"] = resources()
             results = [future.result(timeout=30) for future in pending]
         elapsed = max(row["finished"] for row in results) - started
-        provider = httpx.get(PROVIDER + "/control", trust_env=False).json()
+        provider = checked(observer.get("/control"))
         rejected = [row["seconds"] for row in results if row["error"] == "AI_OVERLOADED"]
         assert provider["peak"] <= 2 and rejected and all(row["completed"] or row["error"] == "AI_OVERLOADED" for row in results)
         evidence["burst"] = {"requests": len(results), "concurrency": 10, "throughput": round(len(results) / elapsed, 2),
@@ -101,7 +104,7 @@ def main():
         control(mode="hang", delay=0)
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             pending = pool.submit(send, users[-1], FAULTY, chats[-1])
-            wait_for(lambda: httpx.get(PROVIDER + "/control", trust_env=False).json()["inflight"], lambda n: n > 0)
+            wait_for(lambda: checked(observer.get("/control"))["inflight"], lambda n: n > 0)
             evidence["timeout_provider_reads"] = measure_reads(users[0], run)
             timed_out = pending.result(timeout=30)
         assert timed_out["error"] == "AI_TIMEOUT" and timed_out["seconds"] <= 25
