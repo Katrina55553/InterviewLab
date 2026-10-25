@@ -222,8 +222,9 @@ describe('platform user flows', () => {
     window.history.replaceState({}, '', '/admin');
     await act(async () => root.render(<App />)); await settle();
     expect(window.location.pathname).toBe('/resumes');
-    expect(container.textContent).not.toContain('管理设置');
-    expect(container.textContent).not.toContain('保存模型配置');
+    expect(container.textContent).not.toContain('场景与智能体管理');
+    expect(container.textContent).not.toContain('保存智能体');
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).startsWith('/api/admin/'))).toBe(false);
   });
   it.each(['unknown', 'failed'])('restores a saved %s answer on explicit user action and uses a new request ID', async status => {
     const saved = { request_id: 'original-request-id', type: 'answer', version: 3, expected_question_id: 'q1', content: '原来的回答内容。' };

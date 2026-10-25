@@ -51,7 +51,7 @@ export function Select({ id, value, options, onValueChange, placeholder = 'è¯·é€
 }
 
 /** Editable suggestions share the same menu style while accepting custom IDs. */
-export function Combobox({ id, value, options, onValueChange, placeholder, disabled, ...aria }: SelectProps) {
+export function Combobox({ id, value, displayValue, options, onValueChange, placeholder, disabled, ...aria }: SelectProps & { displayValue?: string }) {
   const generatedId = useId();
   const inputId = id ?? generatedId;
   const listId = `${inputId}-options`;
@@ -89,7 +89,7 @@ export function Combobox({ id, value, options, onValueChange, placeholder, disab
   };
   return <div className={`app-combobox${options.length ? ' has-options' : ''}`} data-state={open ? 'open' : 'closed'}>
     <div className="app-combobox-control">
-      <input {...aria} ref={input} id={inputId} role={options.length ? 'combobox' : undefined} autoComplete="off" aria-autocomplete={options.length ? 'list' : undefined} aria-expanded={options.length ? open : undefined} aria-controls={open ? listId : undefined} aria-activedescendant={active >= 0 ? `${listId}-${active}` : undefined} value={value} placeholder={placeholder} disabled={disabled}
+      <input {...aria} ref={input} id={inputId} role={options.length ? 'combobox' : undefined} autoComplete="off" aria-autocomplete={options.length ? 'list' : undefined} aria-expanded={options.length ? open : undefined} aria-controls={open ? listId : undefined} aria-activedescendant={active >= 0 ? `${listId}-${active}` : undefined} value={displayValue ?? value} placeholder={placeholder} disabled={disabled}
         onFocus={() => setMenu({ open: true, query: '', active: -1 })}
         onBlur={() => setMenu(current => ({ ...current, open: false }))}
         onChange={event => { onValueChange(event.target.value); setMenu({ open: true, query: event.target.value, active: -1 }) }}

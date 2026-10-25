@@ -24,7 +24,7 @@ const navigationGroups = [
     { to: '/settings/ai', label: 'AI 设置', icon: 'settings', paths: ['/settings/ai'] },
   ] },
   { label: '更多', adminOnly: true, items: [
-    { to: '/admin', label: '管理设置', icon: 'settings', paths: ['/admin'] },
+    { to: '/admin', label: '场景与智能体管理', icon: 'settings', paths: ['/admin'] },
   ] },
 ] as const;
 

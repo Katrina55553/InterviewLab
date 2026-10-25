@@ -208,22 +208,23 @@ async def test_admin_configuration_encrypts_keys_and_versions_updates(platform_c
     assert (await client.post("/api/admin/agents", json=agent_payload, headers=_csrf(client))).status_code == 409
     capabilities = (await client.get("/api/admin/capabilities")).json()
     assert capabilities["scenes"]["evaluate"]["enabled"] is True
-    assert capabilities["scenes"]["resume"]["enabled"] is False
+    assert capabilities["scenes"]["resume"]["enabled"] is True
     assert (await client.delete(f"/api/admin/providers/{provider['id']}?expected_version=2", headers=_csrf(client))).status_code == 204
     agent = (await client.get(f"/api/admin/agents/{agent_response.json()['id']}")).json()
     assert agent["provider_id"] is None and agent["version"] == 2
 
 
 @pytest.mark.asyncio
-async def test_capabilities_match_environment_defaults_and_disabled_overrides(platform_client, monkeypatch):
+async def test_capabilities_report_scene_policy_independently_of_legacy_credentials(platform_client, monkeypatch):
     client, sessions = platform_client
     await _make_admin(client, sessions)
     empty = (await client.get("/api/admin/capabilities")).json()
-    assert not any(scene["enabled"] for scene in empty["scenes"].values())
+    assert all(scene["enabled"] for scene in empty["scenes"].values())
+    assert empty["vision"] is True
+    assert all("provider_id" not in scene for scene in empty["scenes"].values())
     monkeypatch.setattr(auth.settings, "LLM_API_KEY", "environment-test-key")
     configured = (await client.get("/api/admin/capabilities")).json()
-    assert all(scene["enabled"] for name, scene in configured["scenes"].items() if name != "vision")
-    assert configured["vision"] is False
+    assert configured == empty
     disabled = await client.post(
         "/api/admin/agents",
         json={"name": "Disabled evaluator", "scene": "evaluate", "enabled": False},
@@ -241,11 +242,33 @@ async def test_capabilities_match_environment_defaults_and_disabled_overrides(pl
             "model": "vision",
             "api_key": "vision-key",
             "vision": True,
+            "enabled": False,
         },
         headers=_csrf(client),
     )
     assert provider.status_code == 201
+    assert (await client.get("/api/admin/capabilities")).json() == capabilities
+    disabled_vision = await client.post(
+        "/api/admin/agents",
+        json={"name": "Disabled vision", "scene": "vision", "enabled": False, "provider_id": provider.json()["id"]},
+        headers=_csrf(client),
+    )
+    assert disabled_vision.status_code == 201
+    current = (await client.get("/api/admin/capabilities")).json()
+    assert current["vision"] is False
+    assert current["scenes"]["vision"] == {"enabled": False, "agent_id": disabled_vision.json()["id"]}
+    path = f"/api/admin/agents/{disabled_vision.json()['id']}"
+    updated = await client.put(path, json={"enabled": True, "expected_version": 1}, headers=_csrf(client))
+    assert updated.status_code == 200
     assert (await client.get("/api/admin/capabilities")).json()["vision"] is True
+    restored = await client.post(
+        f"/api/admin/revisions/agent/{disabled_vision.json()['id']}/restore",
+        json={"version": 1, "expected_version": 2}, headers=_csrf(client),
+    )
+    assert restored.status_code == 200
+    assert (await client.get("/api/admin/capabilities")).json()["vision"] is False
+    assert (await client.delete(path + "?expected_version=3", headers=_csrf(client))).status_code == 204
+    assert (await client.get("/api/admin/capabilities")).json() == capabilities
 
 
 @pytest.mark.asyncio

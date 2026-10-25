@@ -27,6 +27,6 @@ export interface InterviewCommand {
 }
 export interface InterviewEvent { id: string; sequence: number; payload: { type: string; snapshot?: Interview } }
 export interface Agent { version: number; id: string; name: string; scene?: string | null; provider_id?: string | null; prompt?: string; tools?: string[]; enabled?: boolean }
-export interface Provider { version: number; id: string; name: string; base_url: string; model: string; api_key?: string; api_key_masked?: string; has_key?: boolean; enabled: boolean; vision: boolean }
 export interface Chat { id: string; title: string; agent_id?: string | null; messages?: Message[]; created_at?: string }
 export interface Capabilities { demo_mode?: boolean; asr: boolean; tts: boolean; vision: boolean }
+export interface AdminCapabilities extends Capabilities { scenes: Record<string, { enabled: boolean; agent_id: string | null }> }

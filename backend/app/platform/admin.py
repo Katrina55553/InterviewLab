@@ -410,29 +410,15 @@ async def delete_agent(agent_id: str, expected_version: int = Query(ge=1), user:
 
 @router.get("/capabilities")
 async def capabilities() -> dict:
+    """Global scene policy, not a user's personal model availability."""
     async with async_session_maker() as db:
         agents = {agent.scene: agent for agent in (await db.execute(select(Agent))).scalars() if agent.scene}
-        providers = {provider.id: provider for provider in (await db.execute(select(Provider))).scalars()}
     scenes = {}
     for scene in SCENES:
         agent = agents.get(scene)
-        provider = providers.get(agent.provider_id) if agent else None
-        if scene == "vision" and agent is None:
-            provider = next((item for item in providers.values() if item.enabled and item.vision), None)
-        # The runtime deliberately supports env configuration before an administrator
-        # adds scene overrides; an explicitly disabled Agent still disables its scene.
-        configured = bool(
-            (agent.enabled if agent else True)
-            and (
-                provider.enabled and provider.encrypted_key if provider else settings.LLM_API_KEY and scene != "vision"
-            )
-        )
-        if scene == "vision":
-            configured = configured and bool(provider and provider.vision)
         scenes[scene] = {
-            "enabled": configured,
+            "enabled": agent.enabled if agent else True,
             "agent_id": agent.id if agent else None,
-            "provider_id": provider.id if provider else None,
         }
     media_configured = bool(settings.XFYUN_APP_ID and settings.XFYUN_API_KEY and settings.XFYUN_API_SECRET)
     return {

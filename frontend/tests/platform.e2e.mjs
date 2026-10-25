@@ -42,7 +42,7 @@ try {
   await page.getByRole('button', { name: '创建账号', exact: true }).click();
   await page.getByRole('heading', { name: '简历诊断' }).waitFor();
   await page.screenshot({ path: resolve(output, '02-resumes.png'), fullPage: true });
-  assert.equal(await page.getByRole('link', { name: '管理设置', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('link', { name: '场景与智能体管理', exact: true }).count(), 0);
   const cookies = await context.cookies();
   assert.ok(cookies.find(cookie => cookie.name === 'ra_session')?.httpOnly);
   assert.ok(cookies.find(cookie => cookie.name === 'ra_csrf' && !cookie.httpOnly));

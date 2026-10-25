@@ -173,7 +173,8 @@ async def list_providers(_user: User = Depends(current_user)):
 
 
 @router.get("/models")
-async def list_models(provider_id: str, _user: User = Depends(current_user)):
+async def list_models(response: Response, provider_id: str = Query(max_length=2100), _user: User = Depends(current_user)):
+    response.headers["Cache-Control"] = "no-store"
     if provider_id == "openai":
         from app.platform.subscription_client import list_models as subscription_models
         from app.platform.subscriptions import BASE_URL
@@ -185,14 +186,24 @@ async def list_models(provider_id: str, _user: User = Depends(current_user)):
             config = {"user_provider_id": credential.id, "credential_owner_id": _user.id,
                       "oauth_scope": credential.oauth_scope, "base_url": BASE_URL}
         return await subscription_models(config, async_session_maker)
-    if provider_id != "deepseek":
+    if provider_id not in {provider["id"] for provider in api_key_providers()}:
         return []
-    # Conservative application presets, not the provider's live catalog or maximum context.
-    return [{"id": model, "providerId": "deepseek", "name": name,
-             "description": "预设 ID；展示应用默认预算，实际可用性请测试连接。",
-             "input": ["text"], "reasoning": True,
-             "contextWindow": 8192, "maxTokens": min(settings.AI_MAX_OUTPUT_TOKENS, 8192)}
-            for model, name in (("deepseek-flash", "DeepSeek-V4.1-Flash"), ("deepseek-v4-pro", "DeepSeek-V4-Pro"))]
+    from app.platform.model_catalog import list_models as account_models
+
+    async with async_session_maker() as db:
+        credential = await credential_for(db, _user.id, provider_id)
+        if not credential or credential.auth_method != "api-key" or not credential.encrypted_key:
+            return []
+        if credential.base_url != provider_url(provider_id):
+            raise HTTPException(409, "服务地址已更改，请重新连接此服务商")
+        credential_id, version = credential.id, credential.version
+        base_url, key = credential.base_url, credential.encrypted_key
+    result = await account_models(provider_id, base_url, key)
+    async with async_session_maker() as db:
+        current = await credential_for(db, _user.id, provider_id)
+        if not current or current.id != credential_id or current.version != version:
+            raise HTTPException(409, "认证配置已更新，请重新读取模型列表")
+    return result
 
 
 @router.get("/auth")

@@ -13,6 +13,8 @@ let state: AIConnectionState;
 let connected: Set<string>;
 let subscriptionConnected: boolean;
 let authorizationStatus: string;
+let catalogFailure: boolean;
+let modelCatalogs: Record<string, { id: string; name: string }[]>;
 const selection = { connectionType: 'builtin', authMethod: 'api-key', providerId: 'deepseek', modelId: 'deepseek-flash' } as const;
 const subscriptionSelection = { connectionType: 'builtin', authMethod: 'oauth', providerId: 'openai', modelId: 'account-model' } as const;
 const apiProviders = [
@@ -39,6 +41,10 @@ beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   state = { selection: null, version: 0, has_key: false, allowed_base_urls: ['https://api.deepseek.com'] }; connected = new Set();
   subscriptionConnected = false; authorizationStatus = 'pending';
+  catalogFailure = false;
+  modelCatalogs = Object.fromEntries(apiProviders.map(provider => [provider.id, provider.id === 'deepseek'
+    ? [{ id: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash' }, { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro' }]
+    : [{ id: `${provider.id}-model`, name: `${provider.name} 账户模型` }]]));
   vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
     if (url === '/api/settings/ai' && options?.method === 'PUT') {
       state = { ...state, selection: JSON.parse(options.body as string).selection, version: 1, has_key: true };
@@ -47,7 +53,11 @@ beforeEach(() => {
     if (url === '/api/settings/ai') return json(state);
     if (url === '/api/settings/ai/providers') return json([...apiProviders.map(provider => ({ ...provider, auth: { apiKey: { label: `${provider.name} API Key`, interactive: true } } })), { id: 'openai', name: 'ChatGPT', auth: { oauth: { label: 'Continue with ChatGPT', isSubscription: true } } }]);
     if (url === '/api/settings/ai/models?provider_id=openai') return json(subscriptionConnected ? [{ id: 'account-model', name: '账户模型', providerId: 'openai', input: ['text'], reasoning: false, contextWindow: 8192, maxTokens: 4096 }] : []);
-    if (url.startsWith('/api/settings/ai/models')) return json([{ id: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash', providerId: 'deepseek', input: ['text'], reasoning: true, contextWindow: 8192, maxTokens: 4096 }]);
+    if (url.startsWith('/api/settings/ai/models')) {
+      const providerId = new URL(url, 'http://test').searchParams.get('provider_id')!;
+      if (catalogFailure) return json({ detail: '模型列表读取失败，可手动填写模型名称。' }, 502);
+      return json(connected.has(providerId) ? (modelCatalogs[providerId] ?? []).map(model => ({ ...model, providerId, input: ['text'], reasoning: false, contextWindow: 8192, maxTokens: 4096 })) : []);
+    }
     if (url === '/api/settings/ai/connect') { const { providerId } = JSON.parse(options!.body as string); connected.add(providerId); return json({ providerId, auth: { state: 'configured', method: 'api-key' } }) }
     if (url === '/api/settings/ai/auth?provider_id=openai') return json({ state: subscriptionConnected ? 'configured' : 'unconfigured', method: 'oauth' });
     if (url.startsWith('/api/settings/ai/auth')) return json({ state: connected.has(new URL(url, 'http://test').searchParams.get('provider_id')!) ? 'configured' : 'unconfigured', method: 'api-key' });
@@ -142,6 +152,63 @@ it('saves and restores an OpenAI API Key independently from ChatGPT subscription
   const requests = vi.mocked(fetch).mock.calls.filter(([url]) => url === '/api/settings/ai/connect');
   expect(JSON.parse(requests[0][1]!.body as string)).toEqual({ connectionType: 'builtin', authMethod: 'api-key', providerId: 'openai-api', apiKey: 'openai-private-key' });
   expect(container.innerHTML).not.toContain('openai-private-key');
+});
+
+it('loads account models after connecting and saves the selected API value separately from its name', async () => {
+  modelCatalogs['openai-api'] = [{ id: 'account-model-one', name: '账户模型' }, { id: 'account-model-two', name: '账户模型' }];
+  await act(async () => root.render(<AISettingsPage />)); await settle(); await settle();
+  await selectOption('服务商', 'OpenAI'); await settle();
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/models?provider_id=openai-api'))).toBe(false);
+  const key = container.querySelector<HTMLInputElement>('input[aria-label="API Key"]')!;
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(key, 'catalog-private-key'); key.dispatchEvent(new Event('input', { bubbles: true })) });
+  await click('连接'); await settle();
+  const model = container.querySelector<HTMLInputElement>('input[aria-label="模型名称"]')!;
+  expect(key.value).toBe(''); expect(model.value).toBe('账户模型');
+  expect(state.selection).toBeNull();
+  await act(async () => model.focus());
+  const choices = [...container.querySelectorAll<HTMLElement>('[role="option"]')];
+  expect(choices.map(option => option.textContent)).toEqual(['账户模型', '账户模型']);
+  expect(container.querySelector('.app-combobox small')).toBeNull();
+  await act(async () => choices[1].click()); await click('保存'); await settle();
+  expect(state.selection).toEqual({ connectionType: 'builtin', authMethod: 'api-key', providerId: 'openai-api', modelId: 'account-model-two' });
+  expect(container.innerHTML).not.toContain('catalog-private-key');
+  catalogFailure = true;
+  await click('刷新模型'); await settle();
+  expect(container.querySelector<HTMLInputElement>('input[aria-label="模型名称"]')?.value).toBe('账户模型');
+  expect(container.textContent).toContain('模型列表读取失败');
+});
+
+it('keeps manual model entry and refresh available when the provider catalog fails', async () => {
+  connected.add('openai-api'); catalogFailure = true;
+  await act(async () => root.render(<AISettingsPage />)); await settle(); await settle();
+  await selectOption('服务商', 'OpenAI'); await settle(); await settle();
+  expect(container.textContent).toContain('模型列表读取失败');
+  const model = container.querySelector<HTMLInputElement>('input[aria-label="模型名称"]')!;
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(model, 'manual-account-model'); model.dispatchEvent(new Event('input', { bubbles: true })) });
+  await click('保存'); await settle();
+  expect(state.selection?.modelId).toBe('manual-account-model');
+  catalogFailure = false;
+  await click('刷新模型'); await settle();
+  expect(container.textContent).not.toContain('模型列表读取失败');
+  const restored = container.querySelector<HTMLInputElement>('input[aria-label="模型名称"]')!;
+  expect(restored.value).toBe('manual-account-model');
+  await act(async () => restored.focus());
+  expect(container.querySelector('[role="option"]')?.textContent).toBe('OpenAI 账户模型');
+});
+
+it('ignores a late account catalog after switching providers', async () => {
+  connected.add('openai-api'); connected.add('moonshot');
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  let complete!: (response: Response) => void;
+  const late = new Promise<Response>(resolve => { complete = resolve });
+  vi.mocked(fetch).mockImplementation((...args) => String(args[0]) === '/api/settings/ai/models?provider_id=openai-api' ? late : originalFetch(...args));
+  await act(async () => root.render(<AISettingsPage />)); await settle(); await settle();
+  await selectOption('服务商', 'OpenAI'); await settle();
+  await selectOption('服务商', 'Moonshot（Kimi）'); await settle(); await settle();
+  await act(async () => complete(json([{ id: 'private-old-account-model', providerId: 'openai-api', name: '迟到的旧账户模型', input: ['text'], reasoning: false, contextWindow: 8192, maxTokens: 4096 }]))); await settle();
+  expect(container.querySelector<HTMLInputElement>('input[aria-label="模型名称"]')?.value).toBe('Moonshot（Kimi） 账户模型');
+  expect(container.textContent).not.toContain('迟到的旧账户模型');
+  expect(state.selection).toBeNull();
 });
 
 it('requires the host authorization UI before starting a subscription login', async () => {

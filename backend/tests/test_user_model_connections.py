@@ -11,7 +11,7 @@ import pytest_asyncio
 from sqlalchemy import func, select
 
 from app.core.config import settings
-from app.platform import auth, runtime, user_settings
+from app.platform import auth, model_catalog, runtime, user_settings
 from app.platform.admin import decrypt_key
 from app.platform.ai import guard
 from app.platform.contracts import PlatformError
@@ -93,10 +93,7 @@ async def test_named_providers_resolve_and_freeze_their_own_endpoints(personal_c
     providers = (await client.get("/api/settings/ai/providers")).json()
     assert {provider["id"]: provider["baseUrl"] for provider in providers if "apiKey" in provider["auth"]} == expected
     assert next(provider for provider in providers if provider["id"] == "deepseek")["defaultModel"] == "deepseek-flash"
-    models = (await client.get("/api/settings/ai/models?provider_id=deepseek")).json()
-    assert {model["id"]: model["name"] for model in models} == {
-        "deepseek-flash": "DeepSeek-V4.1-Flash", "deepseek-v4-pro": "DeepSeek-V4-Pro",
-    }
+    assert (await client.get("/api/settings/ai/models?provider_id=deepseek")).json() == []
     assert next(provider for provider in providers if provider["id"] == "openai")["auth"].keys() == {"oauth"}
     for version, (provider_id, base_url) in enumerate(expected.items()):
         connection = {"connectionType": "builtin", "authMethod": "api-key", "providerId": provider_id}
@@ -129,6 +126,61 @@ async def test_provider_directory_enforces_allowlist_and_authentication_type(per
     monkeypatch.setattr(settings, "USER_LLM_ALLOWED_BASE_URLS", "https://api.deepseek.com/v1")
     providers = (await client.get("/api/settings/ai/providers")).json()
     assert next(provider for provider in providers if provider["id"] == "deepseek")["baseUrl"] == "https://api.deepseek.com/v1"
+
+
+@pytest.mark.asyncio
+async def test_catalog_loads_with_each_accounts_saved_key_and_never_runs_inference(personal_client, monkeypatch):
+    client, database = personal_client
+    await register(client)
+    requests = []
+
+    async def upstream(request):
+        requests.append(request)
+        assert request.method == "GET"
+        provider_id = request.headers["authorization"].removeprefix("Bearer catalog-key-")
+        if provider_id == "openrouter":
+            assert request.url.path == "/api/v1/models/user"
+        if provider_id == "siliconflow":
+            assert request.url.params["sub_type"] == "chat"
+        return httpx.Response(200, json={"data": [{"id": provider_id + "-account-model", "name": "账户模型"}]})
+
+    monkeypatch.setattr(model_catalog, "model_http_client", lambda *args, **kwargs: httpx.AsyncClient(transport=httpx.MockTransport(upstream)))
+    providers = (await client.get("/api/settings/ai/providers")).json()
+    for provider in (provider for provider in providers if "apiKey" in provider["auth"]):
+        provider_id = provider["id"]
+        assert (await client.get("/api/settings/ai/models", params={"provider_id": provider_id})).json() == []
+        body = {"connectionType": "builtin", "authMethod": "api-key", "providerId": provider_id, "apiKey": "catalog-key-" + provider_id}
+        assert (await client.post("/api/settings/ai/connect", json=body)).status_code == 200
+        result = await client.get("/api/settings/ai/models", params={"provider_id": provider_id})
+        assert result.status_code == 200 and result.headers["cache-control"] == "no-store", result.text
+        assert result.json()[0]["id"] == provider_id + "-account-model" and result.json()[0]["name"] == "账户模型"
+        assert str(requests[-1].url).startswith(provider["baseUrl"] + "/models")
+        assert "catalog-key-" not in result.text and "encrypted_key" not in result.text
+    assert len(requests) == 7
+    assert (await client.get("/api/settings/ai")).json()["selection"] is None
+    async with database.sessions() as db:
+        assert await db.scalar(select(func.count()).select_from(AiCall)) == 0
+        assert await db.scalar(select(func.count()).select_from(ChatMessage)) == 0
+    await client.post("/api/auth/logout")
+    await register(client, "catalog_other_owner")
+    assert (await client.get("/api/settings/ai/models?provider_id=openai-api")).json() == []
+    assert len(requests) == 7
+
+
+@pytest.mark.asyncio
+async def test_late_catalog_is_rejected_after_disconnect(personal_client, monkeypatch):
+    client, _ = personal_client
+    await register(client)
+    await connect(client)
+
+    async def upstream(_request):
+        assert (await client.delete("/api/settings/ai/auth?provider_id=deepseek")).status_code == 200
+        return httpx.Response(200, json={"data": [{"id": "late-private-model"}]})
+
+    monkeypatch.setattr(model_catalog, "model_http_client", lambda *args, **kwargs: httpx.AsyncClient(transport=httpx.MockTransport(upstream)))
+    response = await client.get("/api/settings/ai/models?provider_id=deepseek")
+    assert response.status_code == 409 and "late-private-model" not in response.text
+    assert (await client.get("/api/settings/ai/models?provider_id=deepseek")).json() == []
 
 
 @pytest.mark.asyncio

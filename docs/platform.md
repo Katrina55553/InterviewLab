@@ -57,7 +57,8 @@ python -m app.platform.cli reset-dev --confirm RESET-PLATFORM
 
 - 「连接」将 API Key 单向提交并加密保存，仅更新当前账户的认证；返回值不包含原文或加密密钥。「保存」单独持久化不含秘密的模型选择；刷新页面可恢复。
 - 「测试连接」发送固定提示词、最多生成 1 Token，15 秒截止，不自动重试、不写入用户聊天，也不自动保存模型选择。测试可能计费，并使用现有调用频率、Token 预留和审计控制。
-- 「API Key」页可选择 DeepSeek、OpenAI、OpenRouter、硅基流动、阿里云百炼、Moonshot（Kimi）和智谱 AI，服务地址由服务端目录自动填入。填写账户可调用的模型 ID，再连接、测试并保存；DeepSeek 提供模型 ID 建议。服务商目录只显示已在 `USER_LLM_ALLOWED_BASE_URLS` 开放的地址，前端不能覆盖内置地址。OpenAI API Key 使用独立的 `openai-api` 凭据，与 `openai` 的 ChatGPT 订阅互不覆盖。
+- 「API Key」页可选择 DeepSeek、OpenAI、OpenRouter、硅基流动、阿里云百炼、Moonshot（Kimi）和智谱 AI，服务地址由服务端目录自动填入。填入 Key 并连接后自动读取模型列表，搜索或选择模型后再测试、保存；已有连接在打开页面时重新读取，也可点击「刷新模型」。列表为空、接口不支持、权限不足或网络失败时保留手动输入。服务商目录只显示已在 `USER_LLM_ALLOWED_BASE_URLS` 开放的地址，前端不能覆盖内置地址。OpenAI API Key 使用独立的 `openai-api` 凭据，与 `openai` 的 ChatGPT 订阅互不覆盖。
+- 模型目录通过当前用户已加密保存的 Key 读取，不向前端暴露 Key、不运行推理、不更新模型选择、不写入聊天。目录响应禁用缓存；读取后检查凭据版本，断开或轮换期间返回的旧列表不会提交。普通兼容接口使用 `GET /models`；[OpenRouter](https://openrouter.ai/docs/api/api-reference/models/list-models-filtered-by-user-provider-preferences-privacy-settings-and-guardrails) 使用 `/models/user` 以尊重账户偏好，[硅基流动](https://siliconflow.readme.io/reference/retrieve-a-list-of-models) 按 `sub_type=chat` 筛选，百炼兼容目录不支持时回退到同域名的[原生分页目录](https://help.aliyun.com/zh/model-studio/list-models)。目录并不保证每个模型都支持当前调用协议，实际以连接测试为准；不会把静态预设伪装成成功读取的账户目录。
 - 自定义接入入口暂不开放；后端保留已有自定义配置的读取和运行兼容。「ChatGPT 订阅登录」使用官方 Sign in with ChatGPT 授权与公共 Responses API；其他订阅服务尚未接入。
 - 模型 ID 是接口参数，不一定等于展示名称。DeepSeek 当前建议项为 `deepseek-flash`（DeepSeek-V4.1-Flash）和 `deepseek-v4-pro`（DeepSeek-V4-Pro），默认前者；输入框和建议项显示模型名称，提交时使用对应 ID。已保存的内置 DeepSeek 旧名称 `deepseek-chat` / `deepseek-reasoner` 在编辑时建议替换为 Flash，点击保存后才更新当前选择；历史任务快照不变。其他服务商的同名模型不受影响。依据 [DeepSeek 官方模型列表](https://api-docs.deepseek.com/api/list-models/)。
 - 用户配置按账户隔离。聊天每次回复读取该用户当前选择；新简历诊断和新面试冻结该用户的模型及加密凭据，后续修改不重写历史事实。未配置时明确提示，不回退到管理员模型或环境变量中的平台 Key。旧版平台凭据快照只允许读取历史，需重新创建诊断或面试才能继续 AI 调用。
@@ -65,6 +66,10 @@ python -m app.platform.cli reset-dev --confirm RESET-PLATFORM
 - `USER_LLM_ALLOWED_BASE_URLS` 由服务端配置完整可信 Base URL，默认包含常见 OpenAI 兼容服务。仅 HTTPS/443，校验所有 DNS 结果为公网地址，固定请求 IP 并保留原域名 TLS 验证，不跟随重定向。局域网模型不能通过此公网代理接入。
 
 ASR/TTS 仍为单独的讯飞服务配置；个人 LLM Key 不等于讯飞凭据。管理员仍管理场景提示词、工具及停用策略。`SECRET_KEY` 重加密工具覆盖个人凭据和冻结快照。
+
+侧栏「场景与智能体管理」仅管理员可见，提供智能体的新增、编辑、删除及修订历史恢复；页面不再提供平台模型连接或智能体模型绑定入口。模型和凭据统一使用调用用户的「AI 设置」。旧供应商记录与修订 API 保留历史兼容，不作为当前业务的模型来源。
+
+`GET /api/admin/capabilities` 中的 `scenes.*.enabled` 和 `vision` 表示全局场景策略：未配置智能体时允许使用，配置后遵循智能体启用状态，与旧供应商和环境变量 Key 无关。管理页将仪态反馈显示为「策略允许/已停用」，实际可用性仍由个人模型及视觉开关决定（`GET /api/media/capabilities`）。保存、删除或恢复智能体后刷新策略状态；语音状态仅表示讯飞凭据是否配置。
 
 ### ChatGPT 订阅登录
 
@@ -111,7 +116,7 @@ docker compose exec backend celery -A app.tasks.celery_app call app.tasks.reposi
 | 2 简历准备 | 简历评分、出题云工作流 | 本地 LangGraph 诊断节点，Celery 准备任务 | TXT/PDF/DOCX 上传后获得解析、评分和建议；开始模拟面试时生成五道题 |
 | 3 面试闭环 | 多 Agent、LiteFlow、报告 | 每命令一轮 LangGraph，确定性追问规则，异步报告 | 低分最多两次追问；报告逐轮回放，追问不重复计分 |
 | 4 可靠性 | Single-flight、快照、CAS | PG 命令账本与 JSONB 快照、短事务、租约、Redis 协调、outbox | 并发提交、重启、过期执行者回写、重复任务与 Redis 丢失实验 |
-| 5 对话配置 | Spring AI、Agent 配置 | AsyncOpenAI 网关、SSE、管理员供应商与角色配置 | 配置版本变化不影响已有面试，密钥不出现在响应中 |
+| 5 对话配置 | Spring AI、Agent 配置 | AsyncOpenAI 网关、SSE、个人模型连接与管理员场景策略 | 配置版本变化不影响已有面试，密钥不出现在响应中 |
 | 6 语音 | AST WebSocket、长文本 TTS | 音频代理、增量归并、有界队列、持久合成任务 | 识别修订不重复；转写可编辑；关闭页面释放麦克风 |
 | 7 视觉交付 | 神态工作流、完整部署 | 可选视觉模型、独立反馈、5 秒节流、私有媒体存储 | 进入面试室请求开启摄像头，关闭即停止；视觉不影响答题分数 |
 
@@ -146,7 +151,7 @@ Outbox 与业务状态同事务提交，独立 dispatcher 发布 Celery 任务�
 - `/api/interviews`：创建独立面试、列表、快照、命令、报告、事件及报告重试。
 - `/ws/interviews/{id}?after=N`：递增事件补取，也接受相同的面试命令。
 - `/api/chats`：会话管理、附件及 SSE 消息；同一请求 ID 完成后可重放，断流保存部分内容。
-- `/api/admin/providers`、`/api/admin/agents`：供应商及版本化角色管理。内置场景为 resume/questions/evaluate/followup/report/chat/vision；无场景的 Agent 可用于自定义聊天。
+- `/api/admin/agents`：版本化场景与智能体管理。内置场景为 resume/questions/evaluate/followup/report/chat/vision；无场景的 Agent 可用于自定义聊天。`/api/admin/providers` 仅保留旧供应商数据的兼容管理。
 - `/api/media`、`/ws/asr/{interview_id}`：能力查询、语音合成和实时转写。
 - `/api/interviews/{id}/vision`：视觉能力启用时上传截图取得独立建议，不保存截图或原始视频。
 

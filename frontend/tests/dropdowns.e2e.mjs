@@ -33,10 +33,13 @@ await page.route('**/api/**', async route => {
   else if (path === '/api/settings/ai') body = { selection: null, version: 0, has_key: false, allowed_base_urls: [] };
   else if (path === '/api/settings/ai/providers') body = [...providers, { id: 'openai', name: 'ChatGPT', auth: { oauth: { label: 'ChatGPT', isSubscription: true } } }];
   else if (path === '/api/settings/ai/auth') body = { state: 'configured', method: url.searchParams.get('provider_id') === 'openai' ? 'oauth' : 'api-key' };
-  else if (path === '/api/settings/ai/models') body = [{ id: 'account-model', name: '账户模型', providerId: 'openai', input: ['text'], reasoning: false, contextWindow: 8192, maxTokens: 4096 }];
-  else if (path === '/api/admin/providers') body = [{ id: 'provider-test', name: '测试模型连接', model: 'test-model', version: 1, enabled: true }];
+  else if (path === '/api/settings/ai/models') {
+    const providerId = url.searchParams.get('provider_id');
+    const models = providerId === 'deepseek' ? [{ id: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash' }, { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro' }] : [{ id: 'account-model', name: '账户模型' }];
+    body = models.map(model => ({ ...model, providerId, input: ['text'], reasoning: false, contextWindow: 8192, maxTokens: 4096 }));
+  }
   else if (path === '/api/admin/agents') body = [];
-  else if (path === '/api/admin/capabilities') body = { demo_mode: false, asr: false, tts: false, vision: false };
+  else if (path === '/api/admin/capabilities') body = { demo_mode: false, asr: false, tts: false, vision: true, scenes: { vision: { enabled: true, agent_id: null } } };
   else if (path === '/api/community/meta') body = { companies: ['腾讯', '字节跳动', '一家名称很长很长的测试公司'], topics: [], myPosts: 0, myLikes: 0 };
   else if (path === '/api/community/posts') body = { items: [], total: 0, page: 1, pageSize: 5 };
   else if (path === '/api/community/draft') body = { draft: null, version: 0 };
@@ -89,20 +92,20 @@ try {
   await page.keyboard.press('Escape');
 
   await page.goto(`${base}/admin`);
-  await page.getByRole('button', { name: '智能体配置', exact: true }).click();
+  await page.getByRole('heading', { name: '场景与智能体管理', exact: true }).waitFor();
+  assert.equal(await page.getByRole('combobox', { name: '使用模型', exact: true }).count(), 0);
   const scene = page.getByRole('combobox', { name: '使用场景', exact: true });
   await scene.click();
   await page.getByRole('option', { name: '回答评分', exact: true }).click();
   assert.equal(await scene.innerText(), '回答评分');
   await scene.click();
-  await page.getByRole('option', { name: '独立对话助手（用户自行选择）', exact: true }).click();
-  assert.equal(await scene.innerText(), '独立对话助手（用户自行选择）');
-  const adminModel = page.getByRole('combobox', { name: '使用模型', exact: true });
-  await adminModel.click();
-  await page.getByRole('option', { name: '测试模型连接', exact: true }).click();
-  await adminModel.click();
-  await page.getByRole('option', { name: '使用服务器默认模型', exact: true }).click();
-  assert.equal(await adminModel.innerText(), '使用服务器默认模型');
+  await page.getByRole('option', { name: '独立对话助手', exact: true }).click();
+  assert.equal(await scene.innerText(), '独立对话助手');
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 1080 });
+    await page.screenshot({ animations: 'disabled', path: resolve(output, `admin-${width}.png`), fullPage: true });
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'Admin page fits the viewport');
+  }
 
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1080 });
