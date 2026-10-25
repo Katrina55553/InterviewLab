@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-**AI 面试平台** — 用户登录 → 上传简历 → 解析、评分与改进建议 → LangGraph 多轮模拟面试 → 量化报告；另含 SSE 聊天、管理员模型与 Agent 配置、可选讯飞 ASR/TTS 和视觉建议。当前运行与架构文档以 `docs/platform.md` 为准。
+**AI 面试平台** — 用户登录 → 上传简历 → 解析 → 按需简历诊断或 LangGraph 多轮模拟面试 → 面试报告；另含 SSE 聊天、管理员模型与 Agent 配置、可选讯飞 ASR/TTS 和视觉建议。当前运行与架构文档以 `docs/platform.md` 为准。
 
 ## 当前平台入口
 
@@ -13,6 +13,7 @@
 - `python -m app.platform.cli create-admin --username admin` 初始化管理员；注册接口始终创建普通用户。Cookie 会话、CSRF 和资源归属检查覆盖 REST、WebSocket 与私有文件。
 - `python -m app.platform.worker` 是必须运行的 outbox dispatcher；准备任务走 `prepare`、报告走 `report`，保留 `default` 处理过渡任务。本地单 Worker 需消费 `prepare,report,default`，并运行 `python -m app.platform.operations.recovery` 巡检；不能只启动 Web 服务而省略异步进程。
 - PostgreSQL 保存权威快照、真实评估、命令节点进度及事件；Redis 丢失不能改变已有面试事实。恢复读取不能调用 AI，失败重试不能补造评分。
+- 简历解析与诊断独立：`prepare` 任务和 `parse` 场景仅保存简历事实；显式 `diagnose` 任务和 `resume` 场景生成评分建议，仍由 `prepare` 队列消费。诊断保存到 `platform_resume_diagnoses`，其失败不能改变 `platform_resumes` 的解析状态或阻塞面试。新面试快照和报告不引用简历评分。
 - 前端页面与状态在 `frontend/src/platform/`。旧页面、stores、匿名 API、Agent 与旧 Celery 任务已删除，不要恢复旧协议。公共解析与脱敏在 `backend/app/core/documents.py`；规则解析仅用于显式演示模式。
 - `PLATFORM_DEMO_MODE=false` 为默认；只有明确开启后才能生成带演示标记的规则结果。无供应商凭据不代表真实服务已验收。
 - 依赖：后端运行/开发输入分别在 `backend/requirements.in`、`requirements-dev.in`，对应 `.txt` 为完整带哈希锁文件；开发安装 `python -m pip install --require-hashes -r requirements-dev.txt`，Docker 只安装运行锁。前端、Docker builder 和 CI 统一使用 Node.js 24 LTS。
@@ -55,7 +56,7 @@ docker compose logs celery --tail 50
 
 ### 用户流程与 Agent
 
-登录 → 上传简历 → 异步解析、评分和改进建议 → 创建独立面试 → 逐命令运行 LangGraph → 量化报告。`backend/app/platform/graph.py` 包含准备、面试和报告图，服务层负责命令租约、版本校验、节点进度与事件提交。
+登录 → 上传简历 → 异步解析 → 按需启动诊断或创建独立面试 → 逐命令运行 LangGraph → 面试报告。`backend/app/platform/graph.py` 包含解析、诊断、面试和报告图，服务层负责独立任务状态、命令租约、版本校验、节点进度与事件提交。
 
 `backend/app/core/tools.py` 提供简历字段查询与代码验证；新平台通过 `platform/runtime.py` 调用模型。真实模式失败不会自动替换为规则评分，演示模式必须显式开启。
 

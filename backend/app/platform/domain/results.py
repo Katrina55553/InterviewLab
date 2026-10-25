@@ -25,8 +25,10 @@ def validate_result(scene, value):
             valid = set(value["dimensions"]) == DIMENSIONS
         except ValidationError:
             valid = False
+    elif scene == "parse":
+        valid = isinstance(value.get("parsed"), dict)
     elif scene == "resume":
-        valid = (isinstance(value.get("parsed"), dict) and type(value.get("resume_score")) is int
+        valid = (type(value.get("resume_score")) is int
                  and 0 <= value["resume_score"] <= 100 and isinstance(value.get("suggestions"), list)
                  and all(isinstance(x, str) for x in value["suggestions"]))
     elif scene == "questions":

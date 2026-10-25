@@ -20,6 +20,22 @@ def test_extract_txt_and_docx(tmp_path):
     assert extract_text(str(docx)) == text
 
 
+@pytest.mark.parametrize("extension", ["pdf", "docx", "doc", "txt"])
+def test_extract_text_removes_nul_characters(tmp_path, monkeypatch, extension):
+    # PDF font mappings can yield U+0000, which PostgreSQL text/JSONB reject.
+    from app.core import documents
+
+    raw = "\x00张三\nPython\x00 FastAPI\t项目经历\n13812345678\x00"
+    path = tmp_path / f"resume.{extension}"
+    if extension == "txt":
+        path.write_bytes(raw.encode())
+    else:
+        extractor = "_extract_text_pdf" if extension == "pdf" else "_extract_text_docx"
+        monkeypatch.setattr(documents, extractor, lambda _: raw)
+
+    assert extract_text(str(path)) == "张三\nPython FastAPI\t项目经历\n13812345678"
+
+
 def test_mask_sensitive_text_before_storage_and_model_calls():
     text = "13812345678 zhangsan@example.com 110101199001011234"
     masked = mask_raw_text(text)

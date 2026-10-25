@@ -24,6 +24,7 @@ from app.platform.models import (
     LoginSession,
     Outbox,
     Resume,
+    ResumeDiagnosis,
     User,
     UserAISettings,
     UserModelCredential,
@@ -84,7 +85,7 @@ async def seed(database, *, active: bool = True):
         "current_question": current,
         "status": "active" if active else "ready",
     }
-    configs = {scene: {"scene": scene} for scene in ("evaluate", "followup", "report", "resume", "questions")}
+    configs = {scene: {"scene": scene} for scene in ("parse", "evaluate", "followup", "report", "resume", "questions")}
     async with database.sessions() as db, db.begin():
         db.add(User(id=user_id, username="user_" + user_id[:8], password_hash="unused", role="user"))
         await db.flush()
@@ -102,7 +103,6 @@ async def seed(database, *, active: bool = True):
                 file_path="unused.txt",
                 status="ready",
                 parsed=snapshot["parsed"],
-                preparation={"questions": questions, "resume_score": 76, "demo": False},
                 config_snapshot=configs,
             )
         )
@@ -412,6 +412,163 @@ async def test_real_postgres_expired_owner_cannot_overwrite_successor(platform_d
     restored = await service.get_interview(run.user_id, run.interview_id)
     assert restored["version"] == successor["version"] == 1
     assert [evaluation["answer"] for evaluation in restored["evaluations"]] == ["New verified answer"]
+
+
+@pytest.mark.asyncio
+async def test_prepare_persists_extracted_text_with_nul_characters(platform_db, tmp_path, monkeypatch):
+    import billiard
+
+    run = await seed(platform_db)
+    path = tmp_path / "resume.txt"
+    path.write_bytes("Python\x00 FastAPI 后端工程师\n项目经历：实现面试平台 13812345678".encode())
+    # Exercise the real extraction path used inside Celery's prefork children.
+    monkeypatch.setattr(billiard, "current_process", lambda: SimpleNamespace(daemon=True))
+    monkeypatch.setattr(settings, "PLATFORM_DEMO_MODE", False)
+    response = {"parsed": {"summary": "后端工程师", "skills": ["Python", "FastAPI"]}}
+    complete = AsyncMock(return_value=response)
+    monkeypatch.setattr(graph, "complete", complete)
+    async with platform_db.sessions() as db, db.begin():
+        resume = await db.get(Resume, run.resume_id)
+        resume.file_path, resume.status = str(path), "queued"
+        job = service.queue_job(db, "prepare", resume.id)
+        resume.active_job_id = job.id
+        job_id = job.id
+
+    await service.run_job(job_id)
+    async with platform_db.sessions() as db:
+        resume = await db.get(Resume, run.resume_id)
+        assert resume.status == "ready", resume.error
+        assert resume.error is None
+        assert resume.raw_text == "Python FastAPI 后端工程师\n项目经历：实现面试平台 138****5678"
+        assert resume.parsed == response["parsed"]
+        assert (await service.get_resume(run.user_id, run.resume_id))["diagnosis"] is None
+        assert (await db.get(Outbox, job_id)).execution_status == "completed"
+    assert "\x00" not in complete.call_args.args[1]
+    assert "13812345678" not in complete.call_args.args[1]
+    await service.run_job(job_id)
+    assert complete.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("diagnosis_status", [None, "queued", "processing", "failed", "ready"])
+async def test_interview_runs_without_diagnosis_results(platform_db, monkeypatch, diagnosis_status):
+    run = await seed(platform_db)
+    if diagnosis_status:
+        async with platform_db.sessions() as db, db.begin():
+            db.add(ResumeDiagnosis(id=new_id(), resume_id=run.resume_id, user_id=run.user_id,
+                                   status=diagnosis_status, error="诊断不可用" if diagnosis_status == "failed" else None))
+    configs = {scene: {"scene": scene} for scene in ("questions", "evaluate", "report")}
+    monkeypatch.setattr(service, "freeze_configs", AsyncMock(return_value=configs))
+
+    async def respond(config, prompt, **kwargs):
+        assert "resume_score" not in prompt
+        if config["scene"] == "questions":
+            return {"questions": [{"text": f"Question {i}"} for i in range(5)]}
+        assert config["scene"] == "report"
+        return {"summary": "仅复盘面试表现", "suggestions": ["补充回答细节"]}
+
+    complete = AsyncMock(side_effect=respond)
+    monkeypatch.setattr(graph, "complete", complete)
+    interview = await service.create_interview(run.user_id, run.resume_id)
+    async with platform_db.sessions() as db:
+        saved = await db.get(Interview, interview["id"])
+        assert "resume_score" not in saved.snapshot
+        assert saved.snapshot["parsed"] == {"skills": ["Python"]}
+    started = await service.execute_command(run.user_id, interview["id"], {"type": "start", "request_id": new_id(), "version": 0})
+    assert started["current_question"]["text"] == "Question 0"
+    await service.execute_command(run.user_id, interview["id"], {"type": "end", "request_id": new_id(), "version": 1})
+    async with platform_db.sessions() as db:
+        report_job = (await db.get(Interview, interview["id"])).active_job_id
+    await service.run_job(report_job)
+    completed = await service.get_interview(run.user_id, interview["id"])
+    assert completed["status"] == "completed"
+    assert "resume_score" not in completed["report"]
+    assert [call.args[0]["scene"] for call in complete.call_args_list] == ["questions", "report"]
+
+
+@pytest.mark.asyncio
+async def test_diagnosis_failure_retries_independently_without_reparsing(platform_db, monkeypatch):
+    from app.platform.operations import parsing
+
+    run = await seed(platform_db)
+    monkeypatch.setattr(service, "freeze_configs", AsyncMock(return_value={"resume": {"scene": "resume"}}))
+    parser = AsyncMock(side_effect=AssertionError("Diagnosis must never reparse the file"))
+    monkeypatch.setattr(parsing, "parse_document", parser)
+    complete = AsyncMock(side_effect=[{"resume_score": "invalid", "suggestions": []},
+                                     {"resume_score": 81, "suggestions": ["补充成果"]}])
+    monkeypatch.setattr(graph, "complete", complete)
+    queued = await service.start_diagnosis(run.user_id, run.resume_id)
+    async with platform_db.sessions() as db:
+        first_job = (await db.get(ResumeDiagnosis, queued["diagnosis"]["id"])).active_job_id
+    duplicate = await service.start_diagnosis(run.user_id, run.resume_id)
+    assert duplicate == queued
+    await service.run_job(first_job)
+    failed = await service.get_resume(run.user_id, run.resume_id)
+    assert failed["status"] == "ready" and failed["error"] is None
+    assert failed["diagnosis"]["status"] == "failed" and failed["diagnosis"]["error"]
+    retried = await service.start_diagnosis(run.user_id, run.resume_id)
+    async with platform_db.sessions() as db:
+        next_job = (await db.get(ResumeDiagnosis, retried["diagnosis"]["id"])).active_job_id
+        job = await db.get(Outbox, next_job)
+        assert next_job != first_job
+        assert job.payload == {"operation_id": first_job, "generation": 1}
+    await service.run_job(next_job)
+    await service.run_job(first_job)
+    saved = await service.get_resume(run.user_id, run.resume_id)
+    assert saved["status"] == "ready" and saved["parsed"] == {"skills": ["Python"]}
+    assert saved["diagnosis"]["result"] == {"resume_score": 81, "suggestions": ["补充成果"], "demo": False}
+    assert await service.start_diagnosis(run.user_id, run.resume_id) == saved
+    assert complete.await_count == 2
+    parser.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detector", ["restore", "worker", "inspector"])
+async def test_expired_diagnosis_never_changes_parsing_state(platform_db, monkeypatch, detector):
+    from app.platform.operations import recovery
+
+    run = await seed(platform_db)
+    monkeypatch.setattr(service, "freeze_configs", AsyncMock(return_value={}))
+    monkeypatch.setattr(recovery, "async_session_maker", platform_db.sessions)
+    queued = await service.start_diagnosis(run.user_id, run.resume_id)
+    async with platform_db.sessions() as db, db.begin():
+        diagnosis = await db.get(ResumeDiagnosis, queued["diagnosis"]["id"])
+        diagnosis.status = "processing"
+        job = await db.get(Outbox, diagnosis.active_job_id)
+        job.execution_status, job.owner_token = "running", "dead-worker"
+        job.lease_until = utcnow() - timedelta(seconds=1)
+        job_id = job.id
+    if detector == "worker":
+        await service.run_job(job_id)
+    elif detector == "inspector":
+        await recovery.sweep_once()
+    saved = await service.get_resume(run.user_id, run.resume_id)
+    assert saved["status"] == "ready" and saved["error"] is None
+    assert saved["diagnosis"]["status"] == "failed"
+    async with platform_db.sessions() as db:
+        assert (await db.get(Outbox, job_id)).execution_status == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_diagnosis_ownership_readiness_and_queue(platform_db, monkeypatch):
+    run = await seed(platform_db)
+    monkeypatch.setattr(service, "freeze_configs", AsyncMock(return_value={}))
+    with pytest.raises(HTTPException) as denied:
+        await service.start_diagnosis("another-user", run.resume_id)
+    assert denied.value.status_code == 404
+    async with platform_db.sessions() as db, db.begin():
+        (await db.get(Resume, run.resume_id)).status = "processing"
+    with pytest.raises(HTTPException) as pending:
+        await service.start_diagnosis(run.user_id, run.resume_id)
+    assert pending.value.status_code == 409
+    async with platform_db.sessions() as db, db.begin():
+        assert await db.scalar(select(func.count()).select_from(ResumeDiagnosis)) == 0
+        (await db.get(Resume, run.resume_id)).status = "ready"
+    await service.start_diagnosis(run.user_id, run.resume_id)
+    sent = []
+    monkeypatch.setattr(worker.celery_app, "send_task", lambda *args, **kwargs: sent.append(kwargs))
+    await worker.dispatch_once()
+    assert len(sent) == 1 and sent[0]["queue"] == "prepare"
 
 
 @pytest.mark.asyncio

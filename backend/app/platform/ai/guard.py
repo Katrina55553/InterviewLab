@@ -20,7 +20,7 @@ _circuits = {}
 
 
 def workload(config):
-    return "vision" if config["scene"] == "vision" else "background" if config["scene"] in {"resume", "report"} else "interactive"
+    return "vision" if config["scene"] == "vision" else "background" if config["scene"] in {"parse", "resume", "report"} else "interactive"
 
 
 def capacity(kind):

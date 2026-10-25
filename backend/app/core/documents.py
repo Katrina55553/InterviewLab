@@ -44,13 +44,17 @@ def extract_text(file_path: str) -> str:
     """根据文件类型提取文本"""
     ext = Path(file_path).suffix.lower()
     if ext == ".pdf":
-        return _extract_text_pdf(file_path)
+        text = _extract_text_pdf(file_path)
     elif ext in (".docx", ".doc"):
-        return _extract_text_docx(file_path)
+        text = _extract_text_docx(file_path)
     elif ext == ".txt":
         with open(file_path, encoding="utf-8", errors="ignore") as f:
-            return f.read()
-    return ""
+            text = f.read()
+    else:
+        return ""
+    # PDF font mappings can emit NUL; PostgreSQL rejects it in text and JSONB.
+    # Clean before masking/model calls so every consumer uses the same text.
+    return text.replace("\x00", "")
 
 
 def mask_raw_text(text: str) -> str:

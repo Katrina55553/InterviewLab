@@ -8,8 +8,8 @@ import type { Interview, Report, Resume } from './types';
 
 let container: HTMLDivElement;
 let root: Root;
-const report: Report = { overall_score: 84, resume_score: 80, dimensions: { professional: 85, project: 83, analysis: 82, logic: 86, completeness: 84 }, completion: { asked: 1, total: 1, answered: 1, skipped: 0 }, turns: [{ question: '请介绍一个项目。', answer: '我负责队列设计，最终减少延迟。', score: 84, feedback: '回答清晰，建议补充量化结果。' }], suggestions: ['加入具体的数据与结果。'], summary: '项目经历表达清晰。' };
-const resume: Resume = { id: 'r-1', filename: '我的简历.txt', status: 'ready', parsed: { skills: ['Python', 'React'] }, preparation: { resume_score: 80, suggestions: ['补充成果数据'] }, created_at: '2026-10-15T10:00:00Z' };
+const report: Report = { overall_score: 84, dimensions: { professional: 85, project: 83, analysis: 82, logic: 86, completeness: 84 }, completion: { asked: 1, total: 1, answered: 1, skipped: 0 }, turns: [{ question: '请介绍一个项目。', answer: '我负责队列设计，最终减少延迟。', score: 84, feedback: '回答清晰，建议补充量化结果。' }], suggestions: ['加入具体的数据与结果。'], summary: '项目经历表达清晰。' };
+const resume: Resume = { id: 'r-1', filename: '我的简历.txt', status: 'ready', parsed: { skills: ['Python', 'React'] }, diagnosis: { id: 'd-1', status: 'ready', result: { resume_score: 80, suggestions: ['补充成果数据'] } }, created_at: '2026-10-15T10:00:00Z' };
 const initial: Interview = { id: 'i-1', resume_id: 'r-1', status: 'ready', version: 0, current_question: null, messages: [], evaluations: [], created_at: '2026-10-15T10:00:00Z' };
 let snapshot: Interview;
 let commands: Record<string, unknown>[];
@@ -51,6 +51,7 @@ beforeEach(() => {
     if (url === '/api/resumes' && options?.method === 'POST') return response(resume);
     if (url === '/api/resumes') return response(resumeItems);
     if (url === '/api/resumes/r-1/retry') { resumeDetail = structuredClone(resume); return response(resumeDetail) }
+    if (url === '/api/resumes/r-1/diagnosis') { resumeDetail = { ...resumeDetail, diagnosis: structuredClone(resume.diagnosis) }; return response(resumeDetail) }
     if (url === '/api/resumes/r-1') return response(resumeDetail);
     if (url === '/api/interviews' && options?.method === 'POST') return response(snapshot);
     if (url === '/api/interviews') return response([snapshot]);
@@ -70,6 +71,51 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: originalMediaDevices }) });
 
 describe('platform user flows', () => {
+  it('only requests diagnosis after an explicit click and keeps the saved result', async () => {
+    resumeDetail = { ...resume, diagnosis: null };
+    window.history.replaceState({}, '', '/resumes/r-1');
+    await act(async () => root.render(<App />)); await settle();
+    expect(container.textContent).toContain('解析后的经历');
+    expect(container.textContent).not.toContain('简历评分');
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => url === '/api/resumes/r-1/diagnosis')).toHaveLength(0);
+    await click('开始诊断');
+    expect(container.textContent).toContain('补充成果数据');
+    await act(async () => root.unmount()); root = createRoot(container);
+    await act(async () => root.render(<App />)); await settle();
+    expect(container.textContent).toContain('补充成果数据');
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => url === '/api/resumes/r-1/diagnosis')).toHaveLength(1);
+  });
+  it.each(['failed', 'processing'] as const)('allows an interview when diagnosis is %s', async status => {
+    resumeDetail = { ...resume, diagnosis: { id: 'd-1', status, error: '诊断暂不可用', result: null } };
+    window.history.replaceState({}, '', '/resumes/r-1');
+    await act(async () => root.render(<App />)); await settle();
+    expect(container.textContent).toContain('解析后的经历');
+    if (status === 'failed') expect(button('重试诊断').disabled).toBe(false);
+    await act(async () => (container.querySelector('a[href^="/interviews/new?resume="]') as HTMLAnchorElement).click()); await settle();
+    expect(button('开始模拟面试').disabled).toBe(false);
+    await click('开始模拟面试');
+    expect(commands[0].type).toBe('start');
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => url === '/api/resumes/r-1/diagnosis')).toHaveLength(0);
+  });
+  it('retries only the diagnosis after it fails', async () => {
+    resumeDetail = { ...resume, diagnosis: { id: 'd-1', status: 'failed', error: '诊断暂不可用' } };
+    window.history.replaceState({}, '', '/resumes/r-1');
+    await act(async () => root.render(<App />)); await settle();
+    await click('重试诊断');
+    expect(container.textContent).toContain('补充成果数据');
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => url === '/api/resumes/r-1/retry')).toHaveLength(0);
+  });
+  it('starts from parsed facts without diagnosis and shows only interview scores in the report', async () => {
+    resumeDetail = { ...resume, diagnosis: null };
+    window.history.replaceState({}, '', '/interviews/new?resume=r-1');
+    await act(async () => root.render(<App />)); await settle();
+    await click('开始模拟面试');
+    await type('#interview-answer', '我负责队列设计，最终减少延迟。'); await click('提交回答');
+    await act(async () => (container.querySelector('a[href="/interviews/i-1/report"]') as HTMLAnchorElement).click()); await settle();
+    expect(container.textContent).toContain('面试综合得分');
+    expect(container.textContent).not.toContain('简历评分');
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => url === '/api/resumes/r-1/diagnosis')).toHaveLength(0);
+  });
   it('opens a discussion with the diagnosed resume without creating an interview', async () => {
     window.history.replaceState({}, '', '/resumes/r-1');
     await act(async () => root.render(<App />)); await settle();
@@ -179,14 +225,14 @@ describe('platform user flows', () => {
   });
   it('waits for preparation to finish before allowing an interview', async () => {
     window.history.replaceState({}, '', '/interviews/new?resume=r-1');
-    resumeDetail = { ...resume, status: 'processing', preparation: null };
+    resumeDetail = { ...resume, status: 'processing', diagnosis: null };
     vi.useFakeTimers();
     const visibility = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
     try {
       await act(async () => root.render(<App />));
       await act(async () => { await vi.advanceTimersByTimeAsync(30) });
       expect(button('开始模拟面试').disabled).toBe(true);
-      expect(container.textContent).toContain('正在解析简历并整理改进建议');
+      expect(container.textContent).toContain('正在解析简历中的经历和技能');
       resumeDetail = structuredClone(resume);
       await act(async () => { await vi.advanceTimersByTimeAsync(2500) });
       expect(button('开始模拟面试').disabled).toBe(false);
@@ -194,11 +240,11 @@ describe('platform user flows', () => {
   });
   it('allows an explicit preparation retry inside the room', async () => {
     window.history.replaceState({}, '', '/interviews/new?resume=r-1');
-    resumeDetail = { ...resume, status: 'failed', error: '供应商暂不可用', preparation: null };
+    resumeDetail = { ...resume, status: 'failed', error: '供应商暂不可用', diagnosis: null };
     await act(async () => root.render(<App />)); await settle();
     expect(container.textContent).toContain('供应商暂不可用');
     expect(button('开始模拟面试').disabled).toBe(true);
-    await click('重新准备');
+    await click('重新解析');
     expect(button('开始模拟面试').disabled).toBe(false);
     expect(commands).toHaveLength(0);
   });

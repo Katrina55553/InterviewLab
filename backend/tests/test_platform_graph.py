@@ -5,17 +5,24 @@ import copy
 import pytest
 import pytest_asyncio
 
-from app.platform.graph import generate_questions, interview_graph, preparation_graph, report_graph, report_numbers
+from app.platform.graph import (
+    diagnosis_graph,
+    generate_questions,
+    interview_graph,
+    parsing_graph,
+    report_graph,
+    report_numbers,
+)
 from app.platform.runtime import AIError
 
 
 @pytest_asyncio.fixture
 async def snapshot():
-    prepared = await preparation_graph.ainvoke({
+    prepared = await parsing_graph.ainvoke({
         "raw_text": "张三\nPython 后端工程师\n负责订单平台的接口、数据持久化、缓存与故障排查。", "configs": {}, "demo": True,
     })
     generated = await generate_questions({**prepared, "demo": True})
-    return {"questions": generated["preparation"]["questions"], "parsed": prepared["parsed"], "resume_score": 60,
+    return {"questions": generated["questions"], "parsed": prepared["parsed"], "resume_score": 60,
             "demo": True, "messages": [], "evaluations": [], "main_index": -1, "follow_up_count": 0,
             "current_question": None, "status": "ready"}
 
@@ -41,7 +48,7 @@ async def test_skip_and_early_end_do_not_fabricate_unasked_scores(snapshot):
     state = await interview_graph.ainvoke({"snapshot": state["snapshot"], "configs": {}, "command": {"type": "skip"}})
     state = await interview_graph.ainvoke({"snapshot": state["snapshot"], "configs": {}, "command": {"type": "end"}})
     result = await report_graph.ainvoke({"snapshot": state["snapshot"], "configs": {}})
-    report = result["preparation"]
+    report = result["report"]
     assert report["overall_score"] == 0
     assert report["completion"] == {"asked": 2, "total": 5, "answered": 0, "skipped": 1}
     assert len(report["turns"]) == 1
@@ -95,12 +102,28 @@ async def test_diagnosis_does_not_generate_questions(monkeypatch):
 
     async def diagnose(config, *args, **kwargs):
         assert config["scene"] == "resume"
-        return {"parsed": {"skills": ["Python"]}, "resume_score": 80, "suggestions": ["补充成果数据"]}
+        return {"resume_score": 80, "suggestions": ["补充成果数据"]}
 
     monkeypatch.setattr(graph, "complete", diagnose)
-    result = await preparation_graph.ainvoke({"raw_text": "resume", "configs": {"resume": {"scene": "resume"}}, "demo": False})
-    assert "questions" not in result["preparation"]
-    assert result["preparation"]["suggestions"] == ["补充成果数据"]
+    result = await diagnosis_graph.ainvoke({"parsed": {"skills": ["Python"]}, "configs": {"resume": {"scene": "resume"}}, "demo": False})
+    assert "questions" not in result["diagnosis"]
+    assert result["diagnosis"]["suggestions"] == ["补充成果数据"]
+
+
+@pytest.mark.asyncio
+async def test_parsing_accepts_facts_without_scores_or_suggestions(monkeypatch):
+    from app.platform import graph
+    from app.platform.domain.results import validate_result
+
+    async def parse(config, prompt, **kwargs):
+        assert config["scene"] == "parse"
+        return validate_result("parse", {"parsed": {"skills": ["Python"]}})
+
+    monkeypatch.setattr(graph, "complete", parse)
+    result = await parsing_graph.ainvoke({"raw_text": "Python developer", "configs": {"parse": {"scene": "parse"}}, "demo": False})
+    assert result["parsed"] == {"skills": ["Python"]}
+    assert "diagnosis" not in result and "preparation" not in result
+    assert validate_result("resume", {"resume_score": 80, "suggestions": []}) == {"resume_score": 80, "suggestions": []}
 
 
 @pytest.mark.asyncio

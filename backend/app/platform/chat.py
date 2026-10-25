@@ -20,7 +20,7 @@ from app.core.database import async_session_maker
 from app.core.documents import mask_raw_text
 from app.platform.auth import check_csrf, current_user
 from app.platform.contracts import PlatformError, error_payload
-from app.platform.models import Agent, Chat, ChatMessage, Resume, User, new_id, utcnow
+from app.platform.models import Agent, Chat, ChatMessage, Resume, ResumeDiagnosis, User, new_id, utcnow
 from app.platform.operations.parsing import parse_document
 from app.platform.runtime import AIError, call_scope, freeze_configs, stream_chat
 from app.utils.security.file_upload import validate_upload_file
@@ -104,14 +104,15 @@ async def create_chat(body: ChatCreate, user: User = Depends(current_user)) -> d
             if resume is None:
                 raise HTTPException(404, "简历不存在")
             if resume.status != "ready":
-                raise HTTPException(409, "请等待简历诊断完成")
+                raise HTTPException(409, "请等待简历解析完成")
         row = Chat(id=new_id(), user_id=user.id, agent_id=body.agent_id, title="新对话", created_at=utcnow())
         db.add(row)
         if resume is not None:
             row.title = f"简历改进：{resume.filename}"[:255]
-            reference = json.dumps({"诊断": {
-                key: value for key, value in (resume.preparation or {}).items() if key != "questions"
-            }, "简历": resume.parsed}, ensure_ascii=False)
+            diagnosis = await db.scalar(select(ResumeDiagnosis).where(
+                ResumeDiagnosis.resume_id == resume.id, ResumeDiagnosis.status == "ready"))
+            reference = json.dumps({"诊断": diagnosis.result if diagnosis else None,
+                                    "简历": resume.parsed}, ensure_ascii=False)
             db.add(ChatMessage(id=new_id(), chat_id=row.id, role="system",
                                content="简历诊断参考资料（演示结果以诊断中的 demo 标记为准）：\n" + reference[:18000],
                                status="completed", request_id="resume-context", created_at=utcnow()))

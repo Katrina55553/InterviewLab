@@ -34,7 +34,31 @@ export function PreparationPage() {
     } catch (err) { setActionError(errorMessage(err)) }
     finally { setBusy(false) }
   };
+  const diagnose = async () => {
+    setBusy(true); setActionError('');
+    try { setData(await api<Resume>(`/resumes/${id}/diagnosis`, { method: 'POST' })) }
+    catch (err) { setActionError(errorMessage(err)) }
+    finally { setBusy(false) }
+  };
   if (!data) return error ? <Notice>{error}<button className="text-button" onClick={() => void refresh()}>重新加载</button></Notice> : <Loading text="正在打开简历…" />;
-  const preparation = data.preparation;
-  return <><Link className="back-link" to="/resumes">← 返回简历诊断</Link><div className="page-heading compact"><span className="eyebrow">GET TO KNOW YOUR STORY</span><h1>简历诊断</h1><p className="muted">{data.filename} <Status value={data.status} /></p></div>{error && <Notice>{error}</Notice>}{actionError && <Notice>{actionError}</Notice>}{data.status === 'failed' ? <section className="card"><Notice>{data.error ?? '简历准备失败，请重试。'}</Notice><button className="btn primary" disabled={busy} onClick={() => void retry()}>重新准备</button></section> : data.status !== 'ready' ? <section className="card preparing"><Loading text={data.status === 'queued' ? '简历已加入准备队列…' : '正在解析简历并生成诊断结果…'} /><p className="muted">这可能需要一点时间。你可以离开页面，稍后在“我的简历”中继续。</p><div className="preparing-steps"><span>解析经历</span><i /><span>评估简历</span><i /><span>整理改进建议</span></div></section> : <><div className="prep-grid"><section className="card score-card"><span className="eyebrow">RESUME REVIEW</span><div className="score-display">{preparation?.resume_score ?? '—'}<span>/ 100</span></div><h2>简历评分</h2><DemoBadge demo={preparation?.demo} /><p className="muted">围绕内容完整性、经历表达与岗位相关性，为你的准备提供参考。</p><ul className="suggestions">{preparation?.suggestions?.map((suggestion, index) => <li key={index}><Icon name="spark" size={16} /><span>{suggestion}</span></li>)}</ul></section><section className="card"><span className="eyebrow">YOUR NEXT STEP</span><h2>按建议完善你的简历</h2><p className="muted">结合评分与解析内容，检查经历表达，补充具体行动和量化成果。</p><p className="muted">和 AI 逐条讨论建议、打磨项目表达，简历与诊断结果会自动带入对话。</p><button className="btn primary" disabled={busy} onClick={() => void discuss()}>{busy ? '正在打开…' : '和 AI 讨论改进建议'}</button><p className="muted">想练习如何讲清这些经历？可以带着这份简历进入面试室。</p><Link className="btn" to={`/interviews/new?resume=${encodeURIComponent(id)}`}>用这份简历练习<Icon name="arrow" size={17} /></Link></section></div><section className="card parsed-resume"><div className="section-heading"><div><span className="eyebrow">YOUR RESUME, ORGANIZED</span><h2>解析后的经历</h2></div></div>{data.parsed ? <ParsedValue value={data.parsed} /> : <p className="muted">暂无结构化解析内容。</p>}</section></>}</>;
+  const diagnosis = data.diagnosis;
+  const result = diagnosis?.status === 'ready' ? diagnosis.result : null;
+  return <>
+    <Link className="back-link" to="/resumes">← 返回简历诊断</Link>
+    <div className="page-heading compact"><span className="eyebrow">GET TO KNOW YOUR STORY</span><h1>简历诊断</h1><p className="muted">{data.filename} <Status value={data.status} /> <DemoBadge demo={data.demo} /></p></div>
+    {error && <Notice>{error}</Notice>}{actionError && <Notice>{actionError}</Notice>}
+    {data.status === 'failed' ? <section className="card"><Notice>{data.error ?? '简历解析失败，请重试。'}</Notice><button className="btn primary" disabled={busy} onClick={() => void retry()}>重新解析</button></section>
+      : data.status !== 'ready' ? <section className="card preparing"><Loading text={data.status === 'queued' ? '简历已加入解析队列…' : '正在提取简历中的经历和技能…'} /><p className="muted">解析完成后，可以选择开始诊断或直接模拟面试。</p></section>
+        : <>
+          <div className="prep-grid">
+            <section className="card score-card"><span className="eyebrow">RESUME REVIEW</span><h2>简历诊断</h2>
+              {result ? <><div className="score-display">{result.resume_score}<span>/ 100</span></div><h3>简历评分</h3><DemoBadge demo={result.demo} /><ul className="suggestions">{result.suggestions.map((suggestion, index) => <li key={index}><Icon name="spark" size={16} /><span>{suggestion}</span></li>)}</ul></>
+                : diagnosis?.status === 'queued' || diagnosis?.status === 'processing' ? <Loading text="正在评估简历并整理改进建议，期间可以正常开始模拟面试…" />
+                  : <>{diagnosis?.status === 'failed' ? <Notice>{diagnosis.error ?? '诊断失败，可以单独重试，不影响模拟面试。'}</Notice> : <p className="muted">简历已解析。按需生成评分和改进建议，也可以直接开始模拟面试。</p>}<button className="btn primary" disabled={busy} onClick={() => void diagnose()}>{diagnosis?.status === 'failed' ? '重试诊断' : '开始诊断'}</button></>}
+            </section>
+            <section className="card"><span className="eyebrow">YOUR NEXT STEP</span><h2>选择你的下一步</h2><p className="muted">模拟面试会围绕解析后的经历提问，随时可以开始。</p><Link className="btn primary" to={`/interviews/new?resume=${encodeURIComponent(id)}`}>用这份简历练习<Icon name="arrow" size={17} /></Link><p className="muted">也可以和 AI 讨论简历；已有诊断结果会一并带入对话。</p><button className="btn" disabled={busy} onClick={() => void discuss()}>和 AI 讨论改进建议</button></section>
+          </div>
+          <section className="card parsed-resume"><div className="section-heading"><div><span className="eyebrow">YOUR RESUME, ORGANIZED</span><h2>解析后的经历</h2></div></div>{data.parsed ? <ParsedValue value={data.parsed} /> : <p className="muted">暂无结构化解析内容。</p>}</section>
+        </>}
+  </>;
 }

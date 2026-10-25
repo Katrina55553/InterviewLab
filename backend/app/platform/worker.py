@@ -59,7 +59,8 @@ async def dispatch_once() -> int:
         try:
             with traced(new=True, trace_id=trace, job_id=job_id):
                 await asyncio.wait_for(asyncio.to_thread(celery_app.send_task, "app.platform.worker.execute_job",
-                    args=[job_id, delivery, trace], task_id=delivery, queue=kind.removeprefix("probe:") if kind.removeprefix("probe:") in {"prepare", "report"} else "default",
+                    args=[job_id, delivery, trace], task_id=delivery,
+                    queue="prepare" if kind == "diagnose" else kind.removeprefix("probe:") if kind.removeprefix("probe:") in {"prepare", "report"} else "default",
                     retry=False), timeout=10)
                 published = True
                 logger.info("job_published", extra={"delivery_id": delivery})

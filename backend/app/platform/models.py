@@ -127,7 +127,24 @@ class Resume(Base):
     active_job_id = Column(String(36), nullable=True)
     raw_text = Column(Text, nullable=True)
     parsed = Column(json_type, nullable=True)
-    preparation = Column(json_type, nullable=True)
+    demo = Column(Boolean, nullable=False, default=False)
+    config_snapshot = Column(json_type, nullable=False, default=dict)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+
+
+class ResumeDiagnosis(Base):
+    __tablename__ = "platform_resume_diagnoses"
+    __table_args__ = (
+        CheckConstraint("status IN ('queued', 'processing', 'ready', 'failed')", name="platform_diagnosis_status"),
+    )
+
+    id = Column(String(36), primary_key=True, default=new_id)
+    resume_id = Column(String(36), ForeignKey("platform_resumes.id", ondelete="CASCADE"), nullable=False, unique=True)
+    user_id = Column(String(36), ForeignKey("platform_users.id", ondelete="CASCADE"), nullable=False, index=True)
+    status = Column(String(24), nullable=False, default="queued")
+    active_job_id = Column(String(36), nullable=True)
+    result = Column(json_type, nullable=True)
     config_snapshot = Column(json_type, nullable=False, default=dict)
     error = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False, default=utcnow)
@@ -262,7 +279,7 @@ class Agent(Base):
     __tablename__ = "platform_agents"
     __table_args__ = (
         CheckConstraint(
-            "scene IS NULL OR scene IN ('resume', 'questions', 'evaluate', 'followup', 'report', 'chat', 'vision')",
+            "scene IS NULL OR scene IN ('parse', 'resume', 'questions', 'evaluate', 'followup', 'report', 'chat', 'vision')",
             name="platform_agent_scene",
         ),
     )

@@ -16,6 +16,7 @@ from app.platform.models import (
     Interview,
     Provider,
     Resume,
+    ResumeDiagnosis,
     UserAISettings,
     UserModelCredential,
     UserOAuthSession,
@@ -48,7 +49,8 @@ async def reencrypt(old_secret, new_secret):
                     row.encrypted_key = new.encrypt(old.decrypt(row.encrypted_key.encode())).decode()
         for row in (await db.scalars(select(UserOAuthSession).with_for_update())).all():
             row.encrypted_data = new.encrypt(old.decrypt(row.encrypted_data.encode())).decode()
-        for model, field in ((ConfigRevision, "config"), (Interview, "config_snapshot"), (Resume, "config_snapshot")):
+        for model, field in ((ConfigRevision, "config"), (Interview, "config_snapshot"), (Resume, "config_snapshot"),
+                             (ResumeDiagnosis, "config_snapshot")):
             for row in (await db.scalars(select(model).with_for_update())).all():
                 setattr(row, field, transform(copy.deepcopy(getattr(row, field)), old, new))
 

@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
+import sqlalchemy as sa
 from sqlalchemy import create_engine, func, select, text
 
 from app.core.config import settings
@@ -111,6 +112,45 @@ def test_incremental_upgrade_preserves_usage_and_creates_honest_configuration_ba
         assert json.loads(row.config)["tools"] == ["lookup_resume_field"]
         assert row.actor_id is None and row.version == 3
     engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_diagnosis_migration_preserves_saved_results_and_parsed_facts(database):
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    path = Path(__file__).resolve().parents[1] / "migrations/versions/20261025_0009_resume_diagnoses.py"
+    spec = importlib.util.spec_from_file_location("resume_split_upgrade_fixture", path)
+    revision = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(revision)
+    result = {"resume_score": 79, "suggestions": ["保留真实建议"], "demo": True}
+    config = {"resume": {"encrypted_key": "original-frozen-credential", "model": "original-model"}}
+
+    def verify(connection):
+        with Operations.context(MigrationContext.configure(connection)):
+            revision.downgrade()
+            connection.execute(text("INSERT INTO platform_users(id,username,password_hash,role,created_at) "
+                "VALUES ('legacy-owner','legacy-owner','unused','user','2026-10-25')"))
+            resumes = sa.table("platform_resumes", sa.column("id"), sa.column("user_id"), sa.column("filename"),
+                sa.column("file_path"), sa.column("status"), sa.column("parsed", sa.JSON()),
+                sa.column("preparation", sa.JSON()), sa.column("config_snapshot", sa.JSON()),
+                sa.column("created_at", sa.DateTime()))
+            connection.execute(resumes.insert().values(id="legacy-resume", user_id="legacy-owner", filename="resume.txt",
+                file_path="private/original.txt", status="ready", parsed={"skills": ["Python"]},
+                preparation=result, config_snapshot=config, created_at=utcnow()))
+            revision.upgrade()
+        diagnoses = sa.table("platform_resume_diagnoses", sa.column("resume_id"), sa.column("result", sa.JSON()),
+                             sa.column("config_snapshot", sa.JSON()), sa.column("status"))
+        row = connection.execute(sa.select(diagnoses)).mappings().one()
+        assert row["resume_id"] == "legacy-resume" and row["status"] == "ready"
+        assert row["result"] == result and row["config_snapshot"] == config
+        facts = sa.table("platform_resumes", sa.column("parsed", sa.JSON()), sa.column("demo", sa.Boolean()))
+        row = connection.execute(sa.select(facts)).mappings().one()
+        assert row["parsed"] == {"skills": ["Python"]} and row["demo"] is True
+        assert "preparation" not in {column["name"] for column in sa.inspect(connection).get_columns("platform_resumes")}
+
+    async with database.engine.begin() as connection:
+        await connection.run_sync(verify)
 
 
 @pytest.mark.asyncio

@@ -46,6 +46,8 @@ async def completion(body: dict):
             result = {"summary": "Test summary", "suggestions": ["Test suggestion"]}
         elif '"resume_score"' in prompt.replace('\\"', '"'):
             result = {"parsed": {"summary": "Test fixture", "skills": ["Python"]}, "resume_score": 76, "suggestions": ["Test evidence"]}
+        elif '"parsed"' in prompt.replace('\\"', '"'):
+            result = {"parsed": {"summary": "Test fixture", "skills": ["Python"]}}
         elif '"questions"' in prompt.replace('\\"', '"'):
             result = {"questions": [{"text": f"Test question {i}", "category": "test"} for i in range(5)]}
         elif '"dimensions"' in prompt.replace('\\"', '"'):

@@ -24,7 +24,7 @@ from sqlalchemy import select
 from app.core.database import async_session_maker
 from app.platform.auth import current_user, websocket_user
 from app.platform.contracts import PlatformError, error_payload, traced
-from app.platform.models import Agent, Interview, Resume, User, new_id
+from app.platform.models import Agent, Interview, Resume, ResumeDiagnosis, User, new_id
 from app.platform.runtime import freeze_configs
 from app.platform.service import (
     create_interview,
@@ -37,6 +37,7 @@ from app.platform.service import (
     resume_view,
     retry_report,
     retry_resume,
+    start_diagnosis,
 )
 from app.platform.service import (
     get_resume as read_resume,
@@ -71,8 +72,10 @@ class InterviewCommand(BaseModel):
 @router.get("/resumes")
 async def list_resumes(user: User = Depends(current_user)):
     async with async_session_maker() as db:
-        rows = (await db.scalars(select(Resume).where(Resume.user_id == user.id).order_by(Resume.created_at.desc()).limit(100))).all()
-        return [resume_view(row) for row in rows]
+        rows = (await db.execute(select(Resume, ResumeDiagnosis).outerjoin(
+            ResumeDiagnosis, ResumeDiagnosis.resume_id == Resume.id,
+        ).where(Resume.user_id == user.id).order_by(Resume.created_at.desc()).limit(100))).all()
+        return [resume_view(row, diagnosis) for row, diagnosis in rows]
 
 
 @router.post("/resumes", status_code=201)
@@ -117,6 +120,11 @@ async def download_resume(resume_id: str, user: User = Depends(current_user)):
 @router.post("/resumes/{resume_id}/retry")
 async def retry_preparation(resume_id: str, user: User = Depends(current_user)):
     return await retry_resume(user.id, resume_id)
+
+
+@router.post("/resumes/{resume_id}/diagnosis")
+async def diagnose_resume(resume_id: str, user: User = Depends(current_user)):
+    return await start_diagnosis(user.id, resume_id)
 
 
 @router.get("/interviews")

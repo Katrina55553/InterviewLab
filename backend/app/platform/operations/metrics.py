@@ -34,7 +34,7 @@ async def lifespan(app):
 
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
-SCENES = {"resume", "questions", "evaluate", "followup", "report", "chat", "vision"}
+SCENES = {"parse", "resume", "questions", "evaluate", "followup", "report", "chat", "vision"}
 
 
 async def render_metrics():
@@ -87,12 +87,12 @@ async def render_metrics():
         queued = await db.scalar(select(func.min(Outbox.created_at)).where(Outbox.execution_status == "queued"))
         sample("outbox_oldest_seconds", (now - queued).total_seconds() if queued else 0)
         for kind, status, count in (await db.execute(select(Outbox.kind, Outbox.execution_status, func.count()).group_by(Outbox.kind, Outbox.execution_status))).all():
-            if kind in {"prepare", "report"} and status in {"queued", "running", "completed", "failed", "unknown"}:
+            if kind in {"prepare", "diagnose", "report"} and status in {"queued", "running", "completed", "failed", "unknown"}:
                 sample("jobs", count, workload=kind, status=status)
         def seconds(end, start):
             return (func.julianday(end) - func.julianday(start)) * 86400 if db.bind.dialect.name == "sqlite" else func.extract("epoch", end - start)
 
-        for kind in ("prepare", "report"):
+        for kind in ("prepare", "diagnose", "report"):
             await histogram("job_wait_seconds", seconds(Outbox.started_at, Outbox.created_at), Outbox,
                             [Outbox.kind == kind, Outbox.started_at.is_not(None)], (1, 5, 15, 60, 300, 900), workload=kind)
             await histogram("job_execution_seconds", seconds(Outbox.finished_at, Outbox.started_at), Outbox,

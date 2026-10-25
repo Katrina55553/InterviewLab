@@ -6,7 +6,17 @@ from sqlalchemy import delete, select, update
 
 from app.core.database import async_session_maker
 from app.platform.ai.guard import database_now
-from app.platform.models import AiCall, AiFlight, AiPermit, CircuitObservation, Command, Interview, Outbox, Resume
+from app.platform.models import (
+    AiCall,
+    AiFlight,
+    AiPermit,
+    CircuitObservation,
+    Command,
+    Interview,
+    Outbox,
+    Resume,
+    ResumeDiagnosis,
+)
 
 
 async def sweep_once():
@@ -23,7 +33,9 @@ async def sweep_once():
                 error="执行者租约已过期，调用结果未知；请确认后手动重试"))
     for job in jobs:
         async with async_session_maker() as db, db.begin():
-            model = Resume if job.kind == "prepare" else Interview
+            model = {"prepare": Resume, "diagnose": ResumeDiagnosis, "report": Interview}.get(job.kind)
+            if model is None:
+                continue
             aggregate = await db.scalar(select(model).where(model.id == job.aggregate_id).with_for_update())
             row = await db.scalar(select(Outbox).where(Outbox.id == job.id).with_for_update())
             now = await database_now(db)
@@ -33,7 +45,7 @@ async def sweep_once():
                 row.error = "任务执行者退出，调用结果未知；请确认后手动重试"
                 if aggregate and aggregate.active_job_id == row.id:
                     aggregate.error = row.error
-                    if model is Resume:
+                    if model in (Resume, ResumeDiagnosis):
                         aggregate.status = "failed"
     async with async_session_maker() as db, db.begin():
         now = await database_now(db)

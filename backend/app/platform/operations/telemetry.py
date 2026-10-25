@@ -13,7 +13,7 @@ from app.platform.contracts import trace_context
 from app.platform.models import CircuitObservation, OperationCounter
 
 NAMES = {"admission", "rejected", "flight_hit", "circuit_open", "lease_lost", "media_backpressure", "ai_timeout"}
-SCENES = {"resume", "questions", "evaluate", "followup", "report", "chat", "vision"}
+SCENES = {"parse", "resume", "questions", "evaluate", "followup", "report", "chat", "vision"}
 WORKLOADS = {"interactive", "background", "vision", "tool", "parse", "media"}
 WRITE_TIMEOUT_SECONDS = .1
 

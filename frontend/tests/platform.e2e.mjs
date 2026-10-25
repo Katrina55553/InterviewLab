@@ -53,6 +53,10 @@ try {
   await page.waitForURL(/\/resumes\//);
   const resumeId = page.url().split('/').at(-1);
   await page.getByRole('link', { name: '用这份简历练习' }).waitFor({ timeout: 90000 });
+  const parsedResume = await (await page.request.get(`${base}/api/resumes/${resumeId}`)).json();
+  assert.equal(parsedResume.status, 'ready');
+  assert.equal(parsedResume.diagnosis, null);
+  assert.equal(await page.getByRole('heading', { name: '简历评分', exact: true }).count(), 0);
   assert.ok(await page.getByText('演示模式 · 非真实 AI 评估').count());
   await page.screenshot({ path: resolve(output, '03-preparation.png'), fullPage: true });
   await page.getByRole('link', { name: '用这份简历练习' }).click();
@@ -78,9 +82,17 @@ try {
   assert.equal(persisted.report.completion.answered, 5);
   assert.equal(persisted.report.completion.skipped, 0);
   assert.equal(persisted.report.turns.length, 5);
+  assert.equal('resume_score' in persisted.report, false);
+  assert.equal(await page.getByText('简历评分', { exact: true }).count(), 0);
   await page.screenshot({ path: resolve(output, '05-report.png'), fullPage: true });
   // A second session checks follow-up, rephrasing, explicit skip=0 and early ending.
   await page.goto(`${base}/resumes/${resumeId}`);
+  await page.getByRole('button', { name: '开始诊断', exact: true }).click();
+  await page.getByRole('heading', { name: '简历评分', exact: true }).waitFor({ timeout: 90000 });
+  const diagnosedResume = await (await page.request.get(`${base}/api/resumes/${resumeId}`)).json();
+  assert.equal(diagnosedResume.status, 'ready');
+  assert.equal(diagnosedResume.diagnosis.status, 'ready');
+  assert.deepEqual(diagnosedResume.parsed, parsedResume.parsed);
   await page.getByRole('link', { name: '用这份简历练习' }).click();
   const started = await commandClick('开始模拟面试');
   const partialId = started.id;

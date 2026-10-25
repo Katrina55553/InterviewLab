@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.database import Base
 from app.platform import auth, chat
-from app.platform.models import Agent, Chat, ChatMessage, Provider, Resume, User, new_id, utcnow
+from app.platform.models import Agent, Chat, ChatMessage, Provider, Resume, ResumeDiagnosis, User, new_id, utcnow
 from app.platform.runtime import AIError
 
 
@@ -417,8 +417,10 @@ async def test_resume_discussion_preserves_context_and_ownership(chat_client):
     resume_id = new_id()
     async with sessions() as db, db.begin():
         db.add(Resume(id=resume_id, user_id=user["id"], filename="resume.txt", file_path="unused",
-                      status="ready", parsed={"skills": ["Python"]},
-                      preparation={"resume_score": 80, "suggestions": ["补充成果数据"], "demo": False}))
+                      status="ready", parsed={"skills": ["Python"]}))
+        await db.flush()
+        db.add(ResumeDiagnosis(id=new_id(), resume_id=resume_id, user_id=user["id"], status="ready",
+                               result={"resume_score": 80, "suggestions": ["补充成果数据"], "demo": False}))
     response = await client.post("/api/chats", json={"resume_id": resume_id}, headers=csrf(client))
     assert response.status_code == 201, response.text
     chat_id = response.json()["id"]

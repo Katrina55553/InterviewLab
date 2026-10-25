@@ -18,8 +18,8 @@ from app.platform.ai.guard import database_now
 from app.platform.contracts import PlatformError, error_payload, trace_id
 from app.platform.coordination import singleflight
 from app.platform.domain.state import read_snapshot, validate_command
-from app.platform.graph import interview_graph, preparation_graph, report_graph
-from app.platform.models import Command, Event, Interview, Outbox, Resume, new_id, utcnow
+from app.platform.graph import diagnosis_graph, interview_graph, parsing_graph, report_graph
+from app.platform.models import Command, Event, Interview, Outbox, Resume, ResumeDiagnosis, new_id, utcnow
 from app.platform.operations.faults import checkpoint
 from app.platform.runtime import AIError, call_scope, freeze_configs
 
@@ -36,9 +36,11 @@ async def owned(db, model, object_id: str, user_id: str, *, lock: bool = False):
     return row
 
 
-def resume_view(row: Resume) -> dict:
+def resume_view(row: Resume, diagnosis: ResumeDiagnosis | None = None) -> dict:
     return {"id": row.id, "filename": row.filename, "status": row.status, "parsed": row.parsed,
-            "preparation": row.preparation, "error": row.error, "created_at": row.created_at.isoformat()}
+            "demo": row.demo, "diagnosis": ({"id": diagnosis.id, "status": diagnosis.status,
+                "result": diagnosis.result, "error": diagnosis.error} if diagnosis else None),
+            "error": row.error, "created_at": row.created_at.isoformat()}
 
 
 async def _expire_job(db, aggregate) -> None:
@@ -51,7 +53,7 @@ async def _expire_job(db, aggregate) -> None:
         job.finished_at = await database_now(db)
         job.error = "任务执行者租约已过期，调用结果未知；请确认后手动重试"
         aggregate.error = job.error
-        if isinstance(aggregate, Resume):
+        if isinstance(aggregate, (Resume, ResumeDiagnosis)):
             aggregate.status = "failed"
 
 
@@ -60,7 +62,10 @@ async def get_resume(user_id: str, resume_id: str) -> dict:
         row = await owned(db, Resume, resume_id, user_id, lock=True)
         if row.status in ("queued", "processing"):
             await _expire_job(db, row)
-        return resume_view(row)
+        diagnosis = await db.scalar(select(ResumeDiagnosis).where(ResumeDiagnosis.resume_id == row.id).with_for_update())
+        if diagnosis and diagnosis.status in ("queued", "processing"):
+            await _expire_job(db, diagnosis)
+        return resume_view(row, diagnosis)
 
 
 def interview_view(row: Interview, pending: Command | None = None) -> dict:
@@ -91,19 +96,17 @@ def queue_job(db, kind: str, aggregate_id: str) -> Outbox:
 
 
 async def create_interview(user_id: str, resume_id: str) -> dict:
-    # Preparation retains its own immutable generation configuration. A new attempt
-    # freezes the CURRENT interview/vision configuration, not the resume's old one.
+    # Interviews freeze their own configuration and depend only on parsed facts.
     configs = await freeze_configs(user_id=user_id)
     async with async_session_maker() as db, db.begin():
         resume = await owned(db, Resume, resume_id, user_id)
         if resume.status != "ready":
-            raise HTTPException(409, "请等待简历准备完成")
-        preparation = resume.preparation
+            raise HTTPException(409, "请等待简历解析完成")
         interview = Interview(
             id=new_id(), user_id=user_id, resume_id=resume.id, status="ready", version=0,
             config_snapshot=configs,
             snapshot={"schema_version": 1, "questions": [], "parsed": resume.parsed,
-                      "resume_score": preparation["resume_score"], "demo": preparation["demo"],
+                      "demo": resume.demo,
                       "messages": [], "evaluations": [], "main_index": -1, "follow_up_count": 0,
                       "current_question": None, "status": "ready"},
         )
@@ -306,6 +309,33 @@ async def retry_resume(user_id: str, resume_id: str) -> dict:
         return resume_view(row)
 
 
+async def start_diagnosis(user_id: str, resume_id: str) -> dict:
+    configs = await freeze_configs(user_id=user_id)
+    async with async_session_maker() as db, db.begin():
+        # The resume lock serializes initial creation as well as duplicate POSTs.
+        resume = await owned(db, Resume, resume_id, user_id, lock=True)
+        if resume.status != "ready":
+            raise HTTPException(409, "请等待简历解析完成后再诊断")
+        diagnosis = await db.scalar(select(ResumeDiagnosis).where(ResumeDiagnosis.resume_id == resume_id).with_for_update())
+        if diagnosis:
+            await _expire_job(db, diagnosis)
+            if diagnosis.status in ("queued", "processing", "ready"):
+                return resume_view(resume, diagnosis)
+        else:
+            diagnosis = ResumeDiagnosis(id=new_id(), resume_id=resume_id, user_id=user_id)
+            db.add(diagnosis)
+        previous = await db.get(Outbox, diagnosis.active_job_id) if diagnosis.active_job_id else None
+        diagnosis.status, diagnosis.error, diagnosis.config_snapshot = "queued", None, configs
+        job = queue_job(db, "diagnose", diagnosis.id)
+        if previous:
+            previous.owner_token = None
+            job.payload = {"operation_id": (previous.payload or {}).get("operation_id", previous.id),
+                           "generation": (previous.payload or {}).get("generation", 0) + 1}
+        diagnosis.active_job_id = job.id
+        await db.flush()
+        return resume_view(resume, diagnosis)
+
+
 async def retry_report(user_id: str, interview_id: str) -> dict:
     async with async_session_maker() as db, db.begin():
         row = await owned(db, Interview, interview_id, user_id, lock=True)
@@ -335,7 +365,7 @@ async def run_job(job_id: str) -> None:
         if job.kind in {"probe:default", "probe:prepare", "probe:report"}:
             job.execution_status = "completed"
             return
-        model = Resume if job.kind == "prepare" else Interview
+        model = {"prepare": Resume, "diagnose": ResumeDiagnosis, "report": Interview}[job.kind]
         aggregate = await db.scalar(select(model).where(model.id == job.aggregate_id).with_for_update())
         job = await db.scalar(select(Outbox).where(Outbox.id == job_id).with_for_update().execution_options(populate_existing=True))
         if job.execution_status in ("completed", "failed", "unknown"):
@@ -347,7 +377,7 @@ async def run_job(job_id: str) -> None:
                 return
             job.execution_status, job.owner_token = "unknown", None
             aggregate.error = "任务执行者退出，调用结果未知，请手动重试"
-            if model is Resume:
+            if model in (Resume, ResumeDiagnosis):
                 aggregate.status = "failed"
             return
         job.execution_status, job.owner_token = "running", owner
@@ -356,6 +386,12 @@ async def run_job(job_id: str) -> None:
         if model is Resume:
             aggregate.status = "processing"
             filename, configs = aggregate.file_path, copy.deepcopy(aggregate.config_snapshot)
+            demo = settings.PLATFORM_DEMO_MODE
+        elif model is ResumeDiagnosis:
+            aggregate.status = "processing"
+            resume = await db.get(Resume, aggregate.resume_id)
+            parsed, demo = copy.deepcopy(resume.parsed), resume.demo
+            configs = copy.deepcopy(aggregate.config_snapshot)
         else:
             snapshot, configs = copy.deepcopy(aggregate.snapshot), copy.deepcopy(aggregate.config_snapshot)
         aggregate_id, kind, user_id = aggregate.id, job.kind, aggregate.user_id
@@ -374,7 +410,11 @@ async def run_job(job_id: str) -> None:
                 raise AIError("未提取到足够文本，请上传可提取文字的 PDF、DOCX 或 TXT")
             with call_scope(user_id, **job_context):
                 async with singleflight(f"prepare:{job_id}", owner):
-                    result = await preparation_graph.ainvoke({"raw_text": raw, "configs": configs, "demo": settings.PLATFORM_DEMO_MODE})
+                    result = await parsing_graph.ainvoke({"raw_text": raw, "configs": configs, "demo": demo})
+        elif kind == "diagnose":
+            with call_scope(user_id, **job_context):
+                async with singleflight(f"diagnose:{job_id}", owner):
+                    result = await diagnosis_graph.ainvoke({"parsed": parsed, "configs": configs, "demo": demo})
         else:
             with call_scope(user_id, aggregate_id, **job_context):
                 async with singleflight(f"report:{job_id}", owner):
@@ -387,9 +427,11 @@ async def run_job(job_id: str) -> None:
                 return
             if kind == "prepare":
                 aggregate.raw_text, aggregate.parsed = raw, result["parsed"]
-                aggregate.preparation, aggregate.status, aggregate.error = result["preparation"], "ready", None
+                aggregate.demo, aggregate.status, aggregate.error = demo, "ready", None
+            elif kind == "diagnose":
+                aggregate.result, aggregate.status, aggregate.error = result["diagnosis"], "ready", None
             else:
-                aggregate.report, aggregate.status, aggregate.error = result["preparation"], "completed", None
+                aggregate.report, aggregate.status, aggregate.error = result["report"], "completed", None
                 aggregate.version += 1
                 await _event(db, aggregate, "complete")
             job.execution_status = "completed"
@@ -405,7 +447,7 @@ async def run_job(job_id: str) -> None:
                 job.finished_at = await database_now(db)
                 job.error = str(exc) if isinstance(exc, PlatformError) else "任务执行失败，请检查日志后重试"
                 aggregate.error = job.error
-                if kind == "prepare":
+                if kind in ("prepare", "diagnose"):
                     aggregate.status = "failed"
                 else:
                     await _event(db, aggregate, "error")

@@ -17,8 +17,8 @@ from app.platform.auth import require_admin
 from app.platform.models import Agent, AiCall, AiPermit, ConfigRevision, Outbox, Provider, User, new_id
 
 router = APIRouter(prefix="/admin", tags=["platform-admin"], dependencies=[Depends(require_admin)])
-Scene = Literal["resume", "questions", "evaluate", "followup", "report", "chat", "vision"]
-SCENES = ("resume", "questions", "evaluate", "followup", "report", "chat", "vision")
+Scene = Literal["parse", "resume", "questions", "evaluate", "followup", "report", "chat", "vision"]
+SCENES = ("parse", "resume", "questions", "evaluate", "followup", "report", "chat", "vision")
 AVAILABLE_TOOLS = frozenset({"lookup_resume_field", "verify_code_snippet"})
 
 

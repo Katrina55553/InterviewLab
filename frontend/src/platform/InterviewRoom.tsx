@@ -24,7 +24,7 @@ export function InterviewRoomPage() {
           {!resumes.data && !resumes.error ? <Loading /> : !!resumes.data?.length && <details className="room-resume-library"><summary>选择已有简历</summary><div className="resume-list">{resumes.data.map(resume => <button type="button" className="resume-row" key={resume.id} aria-pressed={selectedId === resume.id} onClick={() => select(resume.id)}><Icon name="file" /><strong>{resume.filename}</strong><Status value={resume.status} />{selectedId === resume.id && <Icon name="check" />}</button>)}</div></details>}
           {selectedId && <RoomPreparation key={selectedId} id={selectedId} />}
         </div>
-        <div className="answer-composer"><label htmlFor="room-answer">你的回答</label><textarea id="room-answer" rows={3} disabled placeholder="请先上传或选择简历，面试官出题后即可回答…" /><div className="composer-meta"><span className="small muted">简历准备完成后开始提问</span><button className="btn primary" disabled>提交回答<Icon name="arrow" size={16} /></button></div></div>
+        <div className="answer-composer"><label htmlFor="room-answer">你的回答</label><textarea id="room-answer" rows={3} disabled placeholder="请先上传或选择简历，面试官出题后即可回答…" /><div className="composer-meta"><span className="small muted">简历解析完成后开始提问</span><button className="btn primary" disabled>提交回答<Icon name="arrow" size={16} /></button></div></div>
       </section>
       <aside className="interview-aside"><CameraPanel enabled={false} active={false} /><section className="card current-question"><span className="eyebrow">CURRENT STEP</span><h3>简历收集</h3><p className="muted">在对话区上传简历。准备好后，面试官会开始第一道问题。</p></section></aside>
     </div>
@@ -55,7 +55,7 @@ function RoomPreparation({ id }: { id: string }) {
     {error && <Notice>{error}</Notice>}
     {!resume.data && !resume.error && <Loading text="正在读取面试简历…" />}
     {resume.data && <><p>{resume.data.filename} <Status value={resume.data.status} /></p>
-      {resume.data.status === 'failed' ? <><Notice>{resume.data.error ?? '简历准备失败，请重试。'}</Notice><button className="btn" disabled={busy} onClick={() => void run(true)}>重新准备</button></> : ready ? <p className="muted">简历已准备就绪，开始后将根据简历生成面试题，并提出第一个问题。</p> : resume.data.status === 'ready' ? <Notice>暂无可用面试题，请重新上传简历。</Notice> : <Loading text="正在解析简历并整理改进建议，请稍候…" />}
+      {resume.data.status === 'failed' ? <><Notice>{resume.data.error ?? '简历解析失败，请重试。'}</Notice><button className="btn" disabled={busy} onClick={() => void run(true)}>重新解析</button></> : ready ? <p className="muted">简历已准备就绪，开始后将根据简历生成面试题，并提出第一个问题。</p> : resume.data.status === 'ready' ? <Notice>暂无可用面试题，请重新上传简历。</Notice> : <Loading text="正在解析简历中的经历和技能，请稍候…" />}
     </>}
     <button className="btn primary" disabled={!ready || busy || !!resume.error} onClick={() => void run(false)}>{busy ? '正在准备…' : '开始模拟面试'}<Icon name="arrow" size={17} /></button>
   </section>;

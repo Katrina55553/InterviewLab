@@ -9,7 +9,7 @@ import type { AdminCapabilities, Agent } from './types';
 import { Empty, Icon, Loading, Notice } from './ui';
 import { Select } from './Select';
 
-const sceneLabels: Record<string, string> = { resume: '简历评分', questions: '面试出题', evaluate: '回答评分', followup: '追问', report: '报告', chat: 'JD分析', vision: '仪态反馈' };
+const sceneLabels: Record<string, string> = { parse: '简历解析', resume: '简历诊断', questions: '面试出题', evaluate: '回答评分', followup: '追问', report: '报告', chat: 'JD分析', vision: '仪态反馈' };
 const tools = ['lookup_resume_field', 'verify_code_snippet'];
 const blankAgent = { name: '', scene: '', prompt: '', tools: [] as string[], enabled: true };
 
