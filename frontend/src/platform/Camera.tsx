@@ -60,6 +60,8 @@ function CameraPreview({ media, starting, error: cameraError, start, stop, inter
   const [feedback, setFeedback] = useState('');
   const [error, setError] = useState('');
   const video = useRef<HTMLVideoElement>(null);
+  const [advisingFor, setAdvisingFor] = useState<string | null>(null);
+  const advising = enabled && !!interviewId && advisingFor === interviewId;
   const request = useRef<AbortController | null>(null);
   useEffect(() => {
     const element = video.current;
@@ -69,7 +71,7 @@ function CameraPreview({ media, starting, error: cameraError, start, stop, inter
     return () => { element.srcObject = null };
   }, [media]);
   useEffect(() => {
-    if (!camera || !active || !enabled || !interviewId) return;
+    if (!camera || !active || !advising || !interviewId) return;
     let stopped = false;
     const capture = async () => {
       if (!video.current || !video.current.videoWidth || request.current) return;
@@ -91,6 +93,6 @@ function CameraPreview({ media, starting, error: cameraError, start, stop, inter
     };
     const timer = window.setInterval(() => void capture(), 5000);
     return () => { stopped = true; window.clearInterval(timer); request.current?.abort(); request.current = null };
-  }, [camera, media, active, enabled, interviewId]);
-  return <section className="card camera-card"><div className="section-heading"><h3><Icon name="camera" size={18} />摄像头</h3>{camera ? <button className="text-button" onClick={stop}>关闭摄像头</button> : <button className="text-button" disabled={starting} onClick={() => void start()}>{starting ? '正在开启…' : '开启摄像头'}</button>}</div><video ref={video} muted playsInline className={camera ? 'camera-preview' : 'camera-preview hidden'} aria-label="摄像头预览" />{!camera && <p className="muted small">{starting ? '请在浏览器中允许使用摄像头。' : '摄像头未开启，你仍可继续面试。'}</p>}<p className="small muted">{enabled && interviewId ? '面试中每 5 秒提供一次仪态建议，不计入答题得分。' : '当前仅在本机预览，不上传摄像头画面。'}</p>{feedback && <p className="camera-feedback">{feedback}</p>}{(cameraError || error) && <Notice>{cameraError || error}</Notice>}</section>;
+  }, [camera, media, active, advising, interviewId]);
+  return <section className="card camera-card"><div className="section-heading"><h3><Icon name="camera" size={18} />摄像头</h3>{camera ? <button className="text-button" onClick={() => { setAdvisingFor(null); stop() }}>关闭摄像头</button> : <button className="text-button" disabled={starting} onClick={() => void start()}>{starting ? '正在开启…' : '开启摄像头'}</button>}</div><video ref={video} muted playsInline className={camera ? 'camera-preview' : 'camera-preview hidden'} aria-label="摄像头预览" />{!camera && <p className="muted small">{starting ? '请在浏览器中允许使用摄像头。' : '摄像头未开启，你仍可继续面试。'}</p>}<p className="small muted">{advising ? '每 5 秒向视觉模型发送一帧画面提供仪态建议，可能产生费用，不计入答题得分。' : '当前仅在本机预览，不上传摄像头画面。'}</p>{enabled && interviewId && <button className="text-button" disabled={!camera} onClick={() => { setAdvisingFor(advising ? null : interviewId); setError('') }}>{advising ? '暂停视觉建议' : '开启视觉建议'}</button>}{enabled && interviewId && !advising && <p className="small muted">开启后将定期发送画面给已配置的视觉模型，仅保存文字建议。</p>}{feedback && <p className="camera-feedback">{feedback}</p>}{(cameraError || error) && <Notice>{cameraError || error}</Notice>}</section>;
 }

@@ -28,6 +28,19 @@ export function useResource<T>(path: string, pollMs = 0, merge?: (current: T | n
   return { data, error, refresh, setData };
 }
 
+export function useDeletableList<T extends { id: string }>(path: string, pollMs = 5000) {
+  const deleted = useRef(new Set<string>());
+  const merge = useCallback((_current: T[] | null, next: T[]) => next.filter(item => !deleted.current.has(item.id)), []);
+  const resource = useResource<T[]>(path, pollMs, merge);
+  const { setData, refresh } = resource;
+  const onDeleted = useCallback((id: string) => {
+    deleted.current.add(id);
+    setData(current => current?.filter(item => item.id !== id) ?? null);
+    void refresh();
+  }, [setData, refresh]);
+  return { ...resource, onDeleted };
+}
+
 export function newerSnapshot(current: Interview | null, next: Interview): Interview {
   return !current || next.id !== current.id || next.version >= current.version ? next : current;
 }

@@ -16,6 +16,7 @@
     "test:platform": "vitest run src/platform",
     "test:e2e": "node tests/platform.e2e.mjs",
     "test:e2e:admin": "node tests/admin.e2e.mjs",
+    "test:e2e:chat": "node tests/chat-management.e2e.mjs",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },

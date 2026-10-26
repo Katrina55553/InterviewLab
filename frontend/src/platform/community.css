@@ -95,6 +95,12 @@
 .community-post-actions > button { display: inline-flex; align-items: center; gap: 5px; color: #a3ad9c; background: transparent; border: 0; font-size: 10px; padding: 3px 0; white-space: nowrap; }
 .community-post-actions > button:hover,.community-post-actions > button.is-active { color: #2b7954; }
 .community-post-actions > button.is-active > svg { fill: #e6f0e1; }
+.community-post-management { display: flex; justify-content: flex-end; align-items: center; gap: 16px; margin-top: 12px; }
+.community-post-management > button { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; padding: 4px 0; color: #69836c; font-size: 11px; }
+.community-post-management > button:hover { color: var(--community-green); }
+.community-post-management > button.community-delete { color: #b25950; }
+.community-post-management > button.community-delete:hover { color: #913b33; }
+.community-post-management > button:disabled { opacity: .5; cursor: wait; }
 .community-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; color: #a1aa98; font-size: 10px; }
 .community-pagination nav { display: flex; gap: 5px; }
 .community-pagination button { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid #e4e9df; border-radius: 5px; background: white; color: #8e9b86; font-size: 11px; }
@@ -190,7 +196,8 @@
 .community-reader .rich-text li { margin: 7px 0; }
 .community-reader .rich-text pre { max-width: 100%; overflow-x: auto; }
 .community-reader .rich-text img { max-width: 100%; }
-.community-reader-actions { display: flex; gap: 10px; padding: 15px 0 27px; }
+.community-reader-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 15px 0 27px; }
+.community-reader-actions > .community-post-management { margin-top: 0; margin-left: auto; }
 .community-reader-actions > .btn { font-size: 12px; padding: 9px 14px; }
 .community-action-selected.btn { background: #edf4e6; border-color: #d4e2c7; color: #60814c; }
 .community-comments { border-top: 1px solid #e3e9da; padding-top: 23px; }

@@ -1,27 +1,28 @@
 # 知面 InterviewLab · AI 面试平台
 
-基于 FastAPI、LangGraph 和 React 的 AI 面试平台，支持账号登录、简历解析与评分、多轮模拟面试和量化报告，并提供 AI 聊天、管理员模型配置及可选语音与视觉建议。
+基于 FastAPI、LangGraph 和 React 的 AI 面试平台，支持账号登录、简历解析与评分、多轮模拟面试和量化报告，并提供 AI 聊天、个人模型连接、管理员 Agent 配置及可选语音与视觉建议。
 
 运行方式、架构与恢复语义详见 [平台运行与架构说明](docs/platform.md)。
 
 ## 功能与使用流程
 
 1. **注册与登录**：普通用户注册，登录后管理自己的简历、面试与聊天记录；管理员通过命令行单独创建。
-2. **简历诊断**：在 `/resumes` 上传 PDF、DOCX 或 TXT，异步解析、评分并生成改进建议；可携带简历与诊断结果创建 AI 对话继续讨论。
-3. **模拟面试**：从 `/interviews/new` 进入面试室，上传或选择简历，准备完成后开始；首次开始时生成五道主问题，同一简历可创建多次独立面试。
-4. **多轮问答**：LangGraph 根据回答评估并追问，每道主问题最多两次追问，支持跳过、换个问法和结束面试。
-5. **报告与历史**：查看逐轮回答、真实评分、雷达维度与改进建议；恢复面试和读取报告不会重新调用 AI。
+2. **个人 AI 设置**：真实模式下，先在 `/settings/ai` 连接个人 API Key 或完成 ChatGPT 订阅授权，再选择模型并保存。每个账户独立配置。
+3. **简历诊断**：在 `/resumes` 上传 PDF、DOCX 或 TXT，异步解析简历事实；解析完成后可点击「开始诊断」生成评分和改进建议，也可直接开始面试。可携带简历与已有诊断结果创建 AI 对话继续讨论。
+4. **模拟面试**：从 `/interviews/new` 进入面试室，上传或选择简历，准备完成后开始；首次开始时生成五道主问题，同一简历可创建多次独立面试。
+5. **多轮问答**：LangGraph 根据回答评估并追问，每道主问题最多两次追问，支持跳过、换个问法和结束面试。
+6. **报告与历史**：查看逐轮回答、真实评分、雷达维度与改进建议；报告仅复盘面试表现，恢复面试和读取报告不会重新调用 AI。
 
 其他能力：
 
 - **AI 聊天**：独立聊天会话、附件与 SSE 响应。
-- **管理员配置**：管理 OpenAI-compatible 供应商及版本化 Agent，已有面试保留创建时冻结的配置。
+- **管理员配置**：管理场景提示词、工具与启停策略及版本化 Agent；供应商管理仅用于兼容旧数据。已有面试保留创建时冻结的配置。
 - **Agent 工具**：查询简历字段、分析代码片段，按场景配置工具权限。
 - **语音与视觉**：可选讯飞实时转写、长文本 TTS 和独立视觉建议。进入面试室请求摄像头权限并显示本机预览，拒绝或关闭摄像头不阻塞面试；视觉建议不参与答题评分。
 - **访问控制**：HttpOnly Cookie 会话、CSRF 校验、资源归属检查与私有文件访问。
 - **仓库统计**：导航栏展示 GitHub star / fork 数，后端每日北京时间 03:00 同步，失败时保留上次成功快照。
 
-默认使用真实模型服务。只有显式设置 `PLATFORM_DEMO_MODE=true` 才启用规则演示，结果带 `demo` 标记；缺少凭据或模型失败不会自动生成成功评分。
+默认使用真实模型服务，业务调用使用当前账户保存的个人 AI 连接，不回退到管理员供应商或环境变量中的平台 `LLM_*`。只有显式设置 `PLATFORM_DEMO_MODE=true` 才启用规则演示，结果带 `demo` 标记；缺少凭据或模型失败不会自动生成成功评分。
 
 ## 技术与架构
 
@@ -54,14 +55,14 @@
 
 ```powershell
 Copy-Item backend/.env.example backend/.env
-# 编辑 backend/.env：设置随机 SECRET_KEY，并配置 LLM_*。
+# 编辑 backend/.env：设置随机 SECRET_KEY。
 # 仅体验演示流程时，显式设置 PLATFORM_DEMO_MODE=true。
 
 docker compose up -d --build
 docker compose exec backend python -m app.platform.cli create-admin --username admin
 ```
 
-打开 [http://localhost:8000](http://localhost:8000)，注册普通用户或使用初始化的管理员登录。管理员命令会交互式要求输入密码。
+打开 [http://localhost:8000](http://localhost:8000)，注册普通用户或使用初始化的管理员登录。管理员命令会交互式要求输入密码。真实模式下，登录后先打开侧栏「AI 设置」（`/settings/ai`），连接个人凭据、选择模型并保存，再上传简历或开始聊天；管理员账户也需要自己的个人连接。操作说明见[个人模型连接](docs/platform.md#个人模型连接)。
 
 Compose 由 `migrate` 服务执行 Alembic 迁移，后端与业务 Worker 等进程等待迁移完成后启动。默认服务包括：
 
@@ -105,7 +106,7 @@ CELERY_RESULT_BACKEND=redis://localhost:6379/2
 CORS_ORIGINS=http://localhost:8000,http://localhost:5173
 ```
 
-同时配置随机 `SECRET_KEY` 和 `LLM_*`，或显式启用演示模式。确认数据库已创建后执行：
+同时配置随机 `SECRET_KEY`；仅体验规则演示时显式启用 `PLATFORM_DEMO_MODE=true`。真实模式的模型连接在登录后通过「AI 设置」配置，无需填写平台 `LLM_*`。确认数据库已创建后执行：
 
 ```powershell
 python -m app.platform.cli migrate
@@ -151,18 +152,24 @@ npm ci
 npm run dev
 ```
 
-打开 [http://localhost:5173](http://localhost:5173)。Vite 将 `/api` 和 `/ws` 代理到本地后端。后端直接访问时提供 [Swagger 文档](http://localhost:8000/docs) 和 [健康检查](http://localhost:8000/health)；Compose 的 Nginx 未代理 `/docs`。
+打开 [http://localhost:5173](http://localhost:5173)，登录后先在「AI 设置」连接个人凭据并保存模型选择。Vite 将 `/api` 和 `/ws` 代理到本地后端。后端直接访问时提供 [Swagger 文档](http://localhost:8000/docs) 和 [健康检查](http://localhost:8000/health)；Compose 的 Nginx 未代理 `/docs`。
 
 ## 主要配置
 
 配置模板见 [backend/.env.example](backend/.env.example)，加载逻辑见 [config.py](backend/app/core/config.py)。后端命令需在 `backend` 目录运行，以读取该目录的 `.env`。
+
+个人模型在登录后的 `/settings/ai` 配置：「API Key」入口先选择服务商并连接 Key，再从账户模型列表选择或手动填写模型，测试后点击「保存」；「连接」与「测试连接」不会代替保存模型选择。也可使用「ChatGPT 订阅登录」完成授权并保存选择，部署与回调说明见[个人模型连接](docs/platform.md#个人模型连接)。
+
+凭据按账户加密保存，聊天每次回复读取当前选择，新简历解析、诊断和面试冻结各自启动时的个人连接。未配置时返回明确错误；旧平台凭据快照可读取历史，继续 AI 调用需使用个人连接重新创建相应任务。
 
 | 配置 | 用途 |
 | --- | --- |
 | `DATABASE_URL` | PostgreSQL 异步连接；容器用 `postgres`，本地用实际主机地址 |
 | `REDIS_URL` | Redis 协调与通知连接 |
 | `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` | Celery Broker 与结果连接，本地开发也需修改主机地址 |
-| `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | 默认 OpenAI-compatible 模型服务 |
+| `USER_LLM_ALLOWED_BASE_URLS` | 个人 API Key 连接允许访问的完整可信 Base URL；仅 HTTPS/443 和公网地址，默认包含常见服务商 |
+| `USER_LLM_OAUTH_REDIRECT_URI` / `USER_LLM_OAUTH_CLIENT_ID` | ChatGPT 订阅授权回调与可选公开客户端 ID，部署说明见平台文档 |
+| `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` 等 `LLM_*` | 兼容保留字段；当前业务不作为模型连接或个人凭据的后备来源 |
 | `SECRET_KEY` | 会话及供应商密钥保护，部署前替换为随机密钥 |
 | `ENVIRONMENT` | 生产设为 `production`，要求至少 32 字符的非示例 `SECRET_KEY` |
 | `PLATFORM_DEMO_MODE` | 默认 `false`；显式开启规则演示 |
@@ -174,18 +181,19 @@ npm run dev
 | `XFYUN_APP_ID` / `XFYUN_API_KEY` / `XFYUN_API_SECRET` | 可选讯飞 ASR / TTS，需分别开通产品 |
 | `MAX_UPLOAD_SIZE_MB` / `ALLOWED_EXTENSIONS` | 上传限制；模板为 10 MB、`pdf,docx,txt` |
 
-已有数据的环境不能直接替换 `SECRET_KEY`，否则供应商密钥和冻结凭据将无法解密。轮换需停止写入、备份并通过 `python -m app.platform.operations.rekey` 重加密，具体步骤见 [密钥轮换说明](docs/engineering-operations.md#更换-secret_key)。视觉建议需配置独立 vision 供应商及可选 Agent，配置在面试创建时冻结。完整容量、配额与恢复参数见 [运行策略](docs/engineering-operations.md#运行策略)。
+已有数据的环境不能直接替换 `SECRET_KEY`，否则个人凭据、旧供应商密钥和冻结凭据将无法解密。轮换需停止写入、备份并通过 `python -m app.platform.operations.rekey` 重加密，具体步骤见 [密钥轮换说明](docs/engineering-operations.md#更换-secret_key)。视觉建议的模型连接同样来自个人配置，并在面试创建时冻结。完整容量、配额与恢复参数见 [运行策略](docs/engineering-operations.md#运行策略)。
 
 ## 接口入口
 
 | 入口 | 用途 |
 | --- | --- |
 | `/api/auth` | 注册、登录、当前用户、退出 |
-| `/api/resumes` | 简历上传、列表、准备结果、私有文件与失败重试 |
+| `/api/settings/ai` | 当前账户的个人模型选择、凭据连接、模型目录、连接测试与订阅授权 |
+| `/api/resumes` | 简历上传、列表、解析结果、独立诊断、私有文件与失败重试 |
 | `/api/interviews` | 独立面试、快照、命令、事件、报告及报告重试 |
 | `/ws/interviews/{id}?after=N` | 面试事件补取与命令提交 |
 | `/api/chats` | 聊天会话、附件与 SSE 消息 |
-| `/api/admin/providers` / `/api/admin/agents` | 管理员供应商及版本化角色管理 |
+| `/api/admin/providers` / `/api/admin/agents` | 旧供应商数据兼容管理 / 版本化场景与角色管理 |
 | `/api/admin/diagnostics` | 管理员聚合诊断 |
 | `/api/repository/stats` | 登录后读取仓库统计缓存 |
 | `/api/media` / `/ws/asr/{interview_id}` | 媒体能力、语音合成与实时转写 |
@@ -285,6 +293,8 @@ python -m pytest tests/test_platform_service.py tests/test_platform_media.py -q 
 
 模型替身测试验证契约与故障行为。真实 LLM、ASR、TTS 和视觉能力需分别配置凭据并实联验收，详见 [验证记录](docs/verification.md)。
 
+2026-10-26 当前工作区复查：后端 **335 passed / 128 skipped**，前端 **100 passed / 11 files**，Ruff 与 ESLint 通过；10 月 24 日记录的 15 项失败在本次可运行分支中未再出现。未配置隔离 PostgreSQL/Redis 的分支仍跳过，本次未重新验收镜像发布或真实供应商。复测环境、证据与边界见[最新验收结论](docs/verification.md#2026-10-26-个人-ai-配置文档同步与回归复查)。
+
 2026-10-23 依赖升级验收：后端 **267 passed / 8 skipped**，前端 **44 passed**；lint、类型检查、覆盖率执行、生产构建，以及普通用户和管理员两套浏览器流程均通过。Python/npm 依赖审计未发现已知漏洞。后端实测使用隔离 PostgreSQL 18.3 / Redis 7.4.2，生产与 CI 仍配置 PostgreSQL 16 / Redis 7；本轮尚未验证升级后的 Docker 镜像构建、远端 CI 和真实供应商联调。完整环境及测试边界见[验收记录](docs/verification.md#2026-10-23-依赖与构建环境升级)。
 
 2026-10-24 已补齐升级后的 Docker 全栈复测：PostgreSQL **16.15** / Redis **7.4.11** 下，镜像构建、9 项故障恢复、两项容量目标、普通用户和管理员浏览器流程均通过。修正了容量探针在本机因反复创建 HTTP 客户端而漏过并发窗口的问题，保留原有门槛。首次 npm 审计发现的 `zod` 间接开发依赖 **1 项 High 已修复**：升级至 **4.6.7** 后，官方审计恢复 **0 漏洞**，前端 lint、44 项测试、覆盖率及生产构建均通过；真实供应商和远端发布仍需验收。详见[全栈记录](docs/verification.md#2026-10-24-docker-全栈复测)及[安全修复记录](docs/verification.md#2026-10-24-zod-安全修复)。
@@ -323,6 +333,7 @@ python -m app.platform.cli reset-dev --confirm RESET-PLATFORM
 ## 更多文档
 
 - [平台运行与架构](docs/platform.md)
+- [模拟面试工程设计](docs/interview-design.md)
 - [工程化运行手册](docs/engineering-operations.md)
 - [工程化实施方案](docs/engineering-plan.md)
 - [部署与测试记录](docs/verification.md)

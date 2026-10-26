@@ -154,6 +154,9 @@ jobs:
           docker compose -p resumeagent-engineering-test -f docker-compose.test.yml exec -T backend python -c "import asyncio; from app.platform.cli import create_admin; asyncio.run(create_admin('ci_admin', 'disposable-admin-password-2026'))"
       - run: npm run test:e2e && npm run test:e2e:admin
         working-directory: frontend
+      - name: Chat management API and Chromium acceptance
+        run: npm run test:e2e:chat
+        working-directory: frontend
       - name: Save tested images and release sources
         if: github.event_name == 'push'
         run: |

@@ -1,5 +1,63 @@
 # 实施与验收记录
 
+## 2026-10-26 独立视觉模型配置与面试接入
+
+「AI 设置」新增独立视觉模型区域，复用账户已有 API Key 或 ChatGPT 订阅认证，图片测试通过后再保存启用；不切换文字模型。新面试分别冻结文字与视觉配置。API Key 变更需重新测试，订阅正常刷新保持有效；断开认证清理匹配的视觉选择。摄像头预览默认仅在本机显示，用户主动开启视觉建议后才发送画面，可暂停或关闭。
+
+新增迁移 `20261026_0011` 只创建 `platform_user_vision_settings`，不改写历史面试或简历事实。浏览器联调实际复现了原视觉反馈写入 `provider_id=NULL` 导致数据库拒绝的问题，现改为在该历史命名列记录实际个人连接 ID，并补充 SQLite / PostgreSQL 的接口持久化回归。图片内容未保存，建议不参与评分。
+
+| 本次检查 | 结果 |
+| --- | --- |
+| 后端完整 Pytest | **468 passed、12 skipped**，232.87 秒；真实 PostgreSQL / Redis 分支已执行，跳过项均为 SQLite 缺少 PostgreSQL 锁语义的重复分支 |
+| PostgreSQL 16 增量迁移 / Alembic check | 通过，升级到 `20261026_0011`，无模型差异 |
+| 前端 Vitest / coverage | **107 passed / 13 files**；视觉设置行覆盖率 **95.31%**，摄像头行覆盖率 **98.61%** |
+| Ruff / ESLint / TypeScript / Vite build | 通过，`frontend/dist/` 已更新 |
+| 真实 Chromium + FastAPI + PostgreSQL 验收 | 通过：文字与视觉模型独立、服务端图片测试与保存、刷新恢复、桌面/390px 移动端、摄像头主动开启及暂停、反馈真实写入、新旧面试配置隔离 |
+
+后端回归包含图片识别失败不生成凭证、无测试/过期/篡改/跨账号或模型的凭证拒绝、测试时凭据轮换、并发首次保存、独立停用、断开认证、管理员策略、旧快照保持、个人连接反馈持久化，以及真实 SDK 的订阅图片 Responses 协议和刷新语义。
+
+本轮只使用专门创建的 `resumeagent-vision-pg-f4c7` / `resumeagent-vision-redis-f4c7` 临时容器，端口为 55435 / 56382，测试 schema 随机隔离；浏览器验收使用本机 8018 临时服务、实际生产前端产物和虚拟摄像头。模型调用、模型目录和订阅上游使用明确的协议替身，未请求真实供应商，不代表实际模型质量或计费验收。浏览器截图位于 Git 忽略的 `frontend/test-results/vision-feature-20261026/`；临时服务和浏览器脚本位于 `.test-work/vision-feature-20261026/`，最终 JUnit 为 `backend/.test-work/vision-feature-20261026/final-v2.junit.xml`。本轮没有迁移或替换现有业务容器。
+
+验收结束后，临时服务已退出，两只测试容器及其临时数据已按核验后的精确 ID 删除；现有 `resumeagent` 业务容器继续运行。
+
+## 2026-10-26 聊天管理自动验收补齐
+
+`frontend/tests/chat-management.e2e.mjs` 保留原有 PATCH 路由、Cookie/CSRF、重命名、附件保持、置顶排序、空名称拒绝与删除 API 断言，并增加真实 Chromium 页面操作。浏览器通过表单登录、上传附件创建两条对话、发送 SSE 消息，再使用菜单和原生弹窗完成重命名、置顶/取消置顶、取消及删除；刷新后检查名称、排序、消息与附件仍一致。另覆盖菜单键盘导航和 Escape 焦点恢复、移动端菜单边界、删除非当前对话保持路由、删除当前对话回到新对话，以及刷新后的空历史。
+
+CI 的 Docker 作业已加入 `npm run test:e2e:chat`，在显式演示栈启动后、发布制品保存前执行。沿用 `if: always()` 的 `engineering-evidence` 上传，保留聊天 JSON 结果、桌面/移动端截图、失败截图与 Playwright trace；测试或清理失败会以非零状态退出。
+
+| 本次检查 | 结果 |
+| --- | --- |
+| 聊天管理 API + Chromium E2E | **通过**，包含真实附件上传与 SSE、桌面/390px 移动端管理操作和刷新持久化 |
+| 现有普通用户 / 管理员 Chromium E2E | **两套均通过**，退出码 0 |
+| 前端 ESLint / 脚本语法 | 通过 |
+| 前端 Vitest / coverage | **100 passed / 11 files**；平台源码行覆盖率 **89.05%** |
+| 当前源码 Docker 构建 | 前后端均通过，前端镜像内 TypeScript 与 Vite build 通过 |
+| CI YAML / diff 空白检查 | 通过，确认聊天步骤位于演示初始化与发布制品保存之间，证据始终上传 |
+
+本机使用独立 Compose 项目 `resumeagent-chat-acceptance`，从当前工作区构建专用测试镜像，运行 PostgreSQL 16、Redis 7、双 Web、Celery、outbox dispatcher、recovery 巡检与 Nginx；显式 `TEST_DEMO_MODE=true`，没有用浏览器路由替身代替业务接口。Node.js 为 24.15.0，Playwright 为项目锁定的 1.58.2。截图、结果与 trace 位于 Git 忽略的 `frontend/test-results/chat-acceptance-20261026/`，现有两套截图分别位于其 `platform/`、`admin/` 子目录。结束后清理本次测试容器、网络和数据卷，现有 `resumeagent` 业务项目保持运行。
+
+本次只修改验收脚本、CI 与相关说明，不重复执行后端完整 Pytest、故障矩阵或容量探测。远端 GitHub Actions 尚未运行；显式演示的 SSE 通过不代表真实模型、讯飞或视觉供应商联调通过。
+
+## 2026-10-26 个人 AI 配置文档同步与回归复查
+
+根据当前 `runtime.freeze_configs`、个人连接接口和前端「AI 设置」核对使用方式：真实模式下，简历解析、独立诊断、模拟面试及聊天使用当前账户保存的个人模型连接，不回退到管理员供应商或平台 `LLM_*`。连接凭据后仍须选择模型并点击「保存」；连接测试不代替保存。管理员账户同样需要个人连接，规则演示仍需显式开启 `PLATFORM_DEMO_MODE=true`。
+
+README 已同步 Docker、本地开发、配置表和接口入口，并说明解析与诊断独立。下方 10 月 24 日的 **15 failed、226 passed、64 skipped** 保留为当时的历史结果，不再作为当前源码的回归结论。
+
+本次复测对象为 `3f6513b` 基础上的当前工作区，包含已有未提交的个人连接、聊天管理及删除功能等业务改动；本轮仅修改 README 和本验收文档。后端使用已有开发虚拟环境 `backend/.test-runtime/dependency-upgrade/Scripts/python.exe`（Python **3.12.8**、pytest **9.1.1**、FastAPI **0.159.1**、OpenAI SDK **3.36.1**）；前端为 Node.js **24.15.0**、Vitest **5.0.5**。
+
+| 检查 | 最新结果 |
+| --- | --- |
+| 后端完整 Pytest | **335 passed、128 skipped、0 failed / 463 项**，193.75 秒；另有 1 条 SQLite 日期适配器弃用警告 |
+| 个人 AI 相关回归 | 可运行分支通过，覆盖账户隔离、无平台凭据回退、配置冻结与断开、账户模型目录及模拟 OAuth/Responses 协议 |
+| 后端 Ruff / 前端 ESLint | `python -m ruff check .` 与 `npm run lint` 均通过 |
+| 前端 Vitest | `npm test -- --reporter=dot`：**100 passed / 11 files** |
+
+后端执行 `python -m pytest tests -q -p no:cacheprovider --basetemp .test-work/docs-sync-20261026-8c47/pytest-completed --junitxml .test-work/docs-sync-20261026-8c47/pytest.xml --tb=short`。本机沙箱最初阻塞 Windows asyncio 创建本地 socketpair，放行后使用原测试完成上述回归，未修改应用或测试代码。JUnit 证据保存在 Git 忽略的 `backend/.test-work/docs-sync-20261026-8c47/pytest.xml`，前端输出在 `frontend/.test-work/docs-sync-20261026-8c47/vitest.log`。
+
+旧记录中的 15 项失败在本次可运行分支中未再出现。本次没有设置 `PLATFORM_TEST_DATABASE_URL` 或 `PLATFORM_TEST_REDIS_URL`：128 项跳过中，115 项需要 PostgreSQL 测试地址，11 项依赖真实 PostgreSQL 锁语义，2 项需要 Redis 测试地址；这些分支仍需在隔离环境执行。本次也未重建或发布镜像、运行浏览器 E2E、复测容量与故障矩阵，未验证真实 API Key、ChatGPT 订阅、讯飞或视觉供应商；源码回归通过不代表运行中的旧镜像或真实服务已验收。
+
 ## 2026-10-24 面经社区持久化与统一点赞
 
 面经、评论、点赞和私有草稿已接入 PostgreSQL；社区源码不再读写浏览器 localStorage/sessionStorage，移除内置示例帖子与独立收藏功能。「我的点赞」读取同一份点赞关系。迁移 `20261024_0006` 新增五张社区表，依赖 `0005` 的顺序迁移。
@@ -13,7 +71,7 @@
 | 实际 Compose 联调 | 两个临时账号验证发布对其他账号可见、草稿互不可见、评论共享、重复点赞只记一次、取消后从「我的点赞」移除；浏览器刷新后点赞保持 |
 | 运行状态 | 数据库迁移完成；frontend/backend、准备/报告 Worker、outbox、inspector 均健康，`/health/ready` 返回 200；Beat 与 metrics 运行中 |
 
-工作区原有未提交的个人 AI 配置业务改动会使直接运行整个工作区回归出现 **15 failed、226 passed、64 skipped**。本次没有回退或修补这些改动，而是从已运行的 `resumeagent-backend:community-base-20261024` 构建隔离的社区增量镜像 `resumeagent-backend:community-20261024`，验证后更新本机 `resumeagent-backend:local`。发布包含社区接口与完整迁移元数据，个人 AI 配置业务逻辑未一并启用。以后直接从当前工作区重建后端前，应先解决这 15 项回归失败。
+当时工作区中未提交的个人 AI 配置业务改动使完整回归出现 **15 failed、226 passed、64 skipped**。该次社区发布没有回退或修补这些改动，而是从已运行的 `resumeagent-backend:community-base-20261024` 构建隔离的社区增量镜像 `resumeagent-backend:community-20261024`，验证后更新本机 `resumeagent-backend:local`。该次发布包含社区接口与完整迁移元数据，个人 AI 配置业务逻辑未一并启用。本段保留 10 月 24 日的失败与发布历史；当前工作区的复测结论及验收边界见[2026-10-26 个人 AI 配置文档同步与回归复查](#2026-10-26-个人-ai-配置文档同步与回归复查)。
 
 临时 PostgreSQL 测试容器及两个 QA 账号和关联帖子、评论、点赞已清理；原平台账号和内容未删除。验收截图 `frontend/test-results/community-backend-verified.jpg` 展示的是清理前的临时联调记录。增量构建上下文和联调脚本保存在 Git 忽略的 `.test-work/community-release/` 与 `.test-work/community-*.py`，不包含真实用户密码或供应商凭据。
 

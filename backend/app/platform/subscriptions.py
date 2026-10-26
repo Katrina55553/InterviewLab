@@ -30,6 +30,7 @@ PROVIDER_ID = "openai"
 BASE_URL = "https://api.openai.com/v1"
 AUTHORIZE_URL = ISSUER + "/api/accounts/authorize"
 TOKEN_URL = ISSUER + "/api/accounts/oauth/token"
+DISCOVERY_URL = ISSUER + "/.well-known/openid-configuration"
 SCOPES = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct"
 DIRECT_SCOPE = "chatgpt.tokens.use.direct"
 
@@ -45,6 +46,51 @@ def unavailable():
 def auth_json(row):
     return {"state": "configured" if row else "unconfigured", "method": "oauth",
             "source": "ChatGPT 订阅" if row else None}
+
+
+async def revoke_credentials(encrypted_key):
+    """Best-effort remote logout; never expose tokens or upstream error bodies."""
+    try:
+        token = json.loads(decrypt_key(encrypted_key))
+        if not isinstance(token, dict) or any(
+            not isinstance(token.get(key), str) or not token[key] for key in ("refresh_token", "client_id")
+        ):
+            return False
+        async with asyncio.timeout(15), oauth_http_client() as client:
+            endpoint = None
+            for attempt in range(3):
+                try:
+                    if endpoint is None:
+                        discovery = await client.get(DISCOVERY_URL)
+                        discovery.raise_for_status()
+                        metadata = discovery.json()
+                        if not isinstance(metadata, dict) or metadata.get("issuer") != ISSUER:
+                            return False
+                        value = metadata.get("revocation_endpoint")
+                        if not isinstance(value, str):
+                            return False
+                        parsed = urlsplit(value)
+                        if (parsed.scheme != "https" or parsed.netloc != urlsplit(ISSUER).netloc
+                                or parsed.query or parsed.fragment):
+                            return False
+                        endpoint = value
+                    response = await client.post(endpoint, data={
+                        "token": token["refresh_token"], "token_type_hint": "refresh_token", "client_id": token["client_id"],
+                    })
+                    if response.status_code == 200:
+                        return True
+                    if response.status_code < 500:
+                        return False
+                except httpx.RequestError:
+                    pass
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code < 500:
+                        return False
+                if attempt < 2:
+                    await asyncio.sleep(.25 * 2 ** attempt)
+    except (TimeoutError, ValueError, TypeError, HTTPException):
+        pass
+    return False
 
 
 async def token_data(response, client_id, client, *, nonce=None, previous=None):

@@ -7,10 +7,11 @@ import hashlib
 import json
 import logging
 from datetime import timedelta
+from pathlib import Path
 
 import anyio
 from fastapi import HTTPException
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, or_, select, update
 
 from app.core.config import settings
 from app.core.database import async_session_maker
@@ -19,6 +20,8 @@ from app.platform.contracts import PlatformError, error_payload, trace_id
 from app.platform.coordination import singleflight
 from app.platform.domain.state import read_snapshot, validate_command
 from app.platform.graph import diagnosis_graph, interview_graph, parsing_graph, report_graph
+from app.platform.media_locks import try_media_lock
+from app.platform.media_models import MediaTask
 from app.platform.models import Command, Event, Interview, Outbox, Resume, ResumeDiagnosis, new_id, utcnow
 from app.platform.operations.faults import checkpoint
 from app.platform.runtime import AIError, call_scope, freeze_configs
@@ -68,6 +71,68 @@ async def get_resume(user_id: str, resume_id: str) -> dict:
         return resume_view(row, diagnosis)
 
 
+async def _delete_jobs(db, condition) -> None:
+    # Aggregate locks prevent new claims; job locks also serialize heartbeats.
+    jobs = list((await db.scalars(select(Outbox).where(condition).with_for_update())).all())
+    now = await database_now(db)
+    if any(job.execution_status == "running" and job.lease_until and job.lease_until > now for job in jobs):
+        raise HTTPException(409, "后台任务仍在执行，请稍后再删除")
+    await db.execute(delete(Outbox).where(condition))
+
+
+async def _remove_files(files: list[tuple[str, Path]]) -> None:
+    for filename, root in files:
+        try:
+            path = Path(filename).resolve()
+            if path.parent != root.resolve():
+                logger.warning("refused deletion outside private storage")
+                continue
+            await asyncio.to_thread(path.unlink, missing_ok=True)
+        except OSError:
+            logger.warning("private file cleanup failed", exc_info=True)
+
+
+async def delete_resume(user_id: str, resume_id: str) -> None:
+    async with async_session_maker() as db, db.begin():
+        row = await owned(db, Resume, resume_id, user_id, lock=True)
+        if await db.scalar(select(Interview.id).where(Interview.resume_id == row.id).limit(1)):
+            raise HTTPException(409, "这份简历有关联面试，请先在面试记录中删除相关面试")
+        diagnoses = list((await db.scalars(select(ResumeDiagnosis).where(
+            ResumeDiagnosis.resume_id == row.id,
+        ).with_for_update())).all())
+        await _delete_jobs(db, or_(
+            (Outbox.kind == "prepare") & (Outbox.aggregate_id == row.id),
+            (Outbox.kind == "diagnose") & (Outbox.aggregate_id.in_([item.id for item in diagnoses])),
+        ))
+        filename = row.file_path
+        await db.delete(row)
+    await _remove_files([(filename, Path("uploads/platform") / user_id)])
+
+
+async def delete_interview(user_id: str, interview_id: str) -> None:
+    async with async_session_maker() as db, db.begin():
+        row = await owned(db, Interview, interview_id, user_id, lock=True)
+        commands = list((await db.scalars(select(Command).where(
+            Command.interview_id == row.id, Command.status == "running",
+        ).with_for_update())).all())
+        now = await database_now(db)
+        if any(command.lease_until and command.lease_until > now for command in commands):
+            raise HTTPException(409, "面试命令仍在执行，请稍后再删除")
+        tasks = list((await db.scalars(select(MediaTask).where(MediaTask.interview_id == row.id))).all())
+        if any(task.status == "creating" and task.created_at > now - timedelta(seconds=45) for task in tasks):
+            raise HTTPException(409, "语音任务仍在创建，请稍后再删除")
+        if db.bind.dialect.name == "postgresql":
+            if not await try_media_lock(db, "vision", row.id):
+                raise HTTPException(409, "仪态分析仍在执行，请稍后再删除")
+            for task in tasks:
+                if not await try_media_lock(db, "tts-query", task.id):
+                    raise HTTPException(409, "语音任务仍在执行，请稍后再删除")
+        await _delete_jobs(db, (Outbox.kind == "report") & (Outbox.aggregate_id == row.id))
+        files = [(task.audio_path, Path(settings.MEDIA_STORAGE_DIR)) for task in tasks if task.audio_path]
+        await db.delete(row)
+    await _remove_files(files)
+
+
 def interview_view(row: Interview, pending: Command | None = None) -> dict:
     snapshot = read_snapshot(row.snapshot or {})
     return {
@@ -99,7 +164,7 @@ async def create_interview(user_id: str, resume_id: str) -> dict:
     # Interviews freeze their own configuration and depend only on parsed facts.
     configs = await freeze_configs(user_id=user_id)
     async with async_session_maker() as db, db.begin():
-        resume = await owned(db, Resume, resume_id, user_id)
+        resume = await owned(db, Resume, resume_id, user_id, lock=True)
         if resume.status != "ready":
             raise HTTPException(409, "请等待简历解析完成")
         interview = Interview(
@@ -257,9 +322,9 @@ async def execute_command(user_id: str, interview_id: str, payload: dict) -> dic
     except (Exception, asyncio.CancelledError) as exc:
         with anyio.CancelScope(shield=True):
             async with async_session_maker() as db, db.begin():
-                row = await owned(db, Interview, interview_id, user_id, lock=True)
+                row = await db.scalar(select(Interview).where(Interview.id == interview_id).with_for_update())
                 command = await db.scalar(select(Command).where(Command.id == command_id).with_for_update())
-                if (command and command.owner_token == owner and command.status == "running"
+                if (row and command and command.owner_token == owner and command.status == "running"
                         and command.lease_until > await database_now(db) and row.version == payload["version"]):
                     command.status = "unknown" if isinstance(exc, asyncio.CancelledError) or (isinstance(exc, PlatformError) and exc.unknown) else "failed"
                     command.error = ("连接中断，调用结果未知；答案已保留，请确认后重试" if isinstance(exc, asyncio.CancelledError)
@@ -368,7 +433,7 @@ async def run_job(job_id: str) -> None:
         model = {"prepare": Resume, "diagnose": ResumeDiagnosis, "report": Interview}[job.kind]
         aggregate = await db.scalar(select(model).where(model.id == job.aggregate_id).with_for_update())
         job = await db.scalar(select(Outbox).where(Outbox.id == job_id).with_for_update().execution_options(populate_existing=True))
-        if job.execution_status in ("completed", "failed", "unknown"):
+        if not job or job.execution_status in ("completed", "failed", "unknown"):
             return
         if not aggregate or aggregate.active_job_id != job.id:
             return
@@ -422,7 +487,7 @@ async def run_job(job_id: str) -> None:
         async with async_session_maker() as db, db.begin():
             aggregate = await db.scalar(select(model).where(model.id == aggregate_id).with_for_update())
             job = await db.scalar(select(Outbox).where(Outbox.id == job_id).with_for_update())
-            if (job.owner_token != owner or job.execution_status != "running" or job.lease_until <= await database_now(db)
+            if (not aggregate or not job or job.owner_token != owner or job.execution_status != "running" or job.lease_until <= await database_now(db)
                     or aggregate.active_job_id != job.id):
                 return
             if kind == "prepare":

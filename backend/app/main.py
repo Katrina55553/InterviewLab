@@ -14,7 +14,18 @@ from starlette.exceptions import HTTPException
 from app.core.config import settings
 from app.core.database import close_db, init_db
 from app.core.redis import close_redis, init_redis
-from app.platform import admin, api, auth, chat, community, media, repository_stats, subscriptions, user_settings
+from app.platform import (
+    admin,
+    api,
+    auth,
+    chat,
+    community,
+    media,
+    repository_stats,
+    subscriptions,
+    user_settings,
+    vision_settings,
+)
 from app.platform.contracts import PlatformError, TraceMiddleware, error_payload, traced
 from app.platform.operations.logging import configure_logging
 
@@ -61,6 +72,7 @@ app.include_router(chat.router, prefix="/api")
 app.include_router(media.router, prefix="/api")
 app.include_router(repository_stats.router, prefix="/api")
 app.include_router(user_settings.router, prefix="/api")
+app.include_router(vision_settings.router, prefix="/api")
 app.include_router(subscriptions.router, prefix="/api")
 app.include_router(community.router, prefix="/api")
 app.include_router(api.ws_router)

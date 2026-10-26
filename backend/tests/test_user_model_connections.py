@@ -104,7 +104,8 @@ async def test_named_providers_resolve_and_freeze_their_own_endpoints(personal_c
         result = await save(client, version, selection)
         assert result.status_code == 200 and result.json()["selection"] == selection, result.text
         frozen = await runtime.freeze_configs(user_id=owner)
-        assert all(config["base_url"] == base_url for config in frozen.values())
+        assert all(config["base_url"] == base_url for scene, config in frozen.items() if scene != "vision")
+        assert frozen["vision"]["enabled"] is False
         assert decrypt_key(frozen["chat"]["encrypted_key"]) == f"private-{provider_id}"
     async with database.sessions() as db:
         assert await db.scalar(select(func.count()).select_from(UserModelCredential)) == len(expected)

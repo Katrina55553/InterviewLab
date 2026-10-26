@@ -28,9 +28,8 @@ Outcome = Literal["已拿 Offer", "进入下一轮", "持续复盘"]
 Tag = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=32)]
 
 
-class PostInput(BaseModel):
+class PostFields(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    id: UUID
     title: str = Field(min_length=1, max_length=100)
     company: str = Field(min_length=1, max_length=50)
     role: str = Field(min_length=1, max_length=60)
@@ -39,12 +38,16 @@ class PostInput(BaseModel):
     outcome: Outcome
     tags: list[Tag] = Field(max_length=5)
     content: str = Field(min_length=20, max_length=20000)
-    draftVersion: int = Field(default=0, ge=0)
 
     @field_validator("tags")
     @classmethod
     def unique_tags(cls, value):
         return list(dict.fromkeys(value))
+
+
+class PostInput(PostFields):
+    id: UUID
+    draftVersion: int = Field(default=0, ge=0)
 
 
 class DraftInput(BaseModel):
@@ -102,6 +105,15 @@ async def require_post(db, post_id):
     post = await db.get(CommunityPost, str(post_id))
     if post is None:
         raise HTTPException(404, "面经不存在或已删除")
+    return post
+
+
+async def require_owned_post(db, post_id, user_id):
+    post = await db.scalar(select(CommunityPost).where(CommunityPost.id == str(post_id)).with_for_update())
+    if post is None:
+        raise HTTPException(404, "面经不存在或已删除")
+    if post.user_id != user_id:
+        raise HTTPException(403, "只能编辑或删除自己发布的面经")
     return post
 
 
@@ -212,6 +224,27 @@ async def get_post(post_id: UUID, user: User = Depends(current_user)):
         if not rows:
             raise HTTPException(404, "面经不存在或已删除")
         return (await post_views(db, rows, full=True))[0]
+
+
+@router.put("/posts/{post_id}")
+async def edit_post(post_id: UUID, body: PostFields, user: User = Depends(current_user)):
+    async with async_session_maker() as db, db.begin():
+        post = await require_owned_post(db, post_id, user.id)
+        for key, value in body.model_dump(exclude={"tags"}).items():
+            setattr(post, key, value)
+        await db.execute(delete(CommunityTag).where(CommunityTag.post_id == post.id))
+        db.add_all(CommunityTag(post_id=post.id, tag=tag) for tag in body.tags)
+        await db.flush()
+        rows = (await db.execute(post_query(user.id).where(CommunityPost.id == post.id))).all()
+        return (await post_views(db, rows, full=True))[0]
+
+
+@router.delete("/posts/{post_id}", status_code=204)
+async def delete_post(post_id: UUID, user: User = Depends(current_user)):
+    async with async_session_maker() as db, db.begin():
+        post = await require_owned_post(db, post_id, user.id)
+        await db.delete(post)
+    return Response(status_code=204)
 
 
 @router.put("/posts/{post_id}/like")

@@ -39,7 +39,7 @@ async def sweep_once():
             aggregate = await db.scalar(select(model).where(model.id == job.aggregate_id).with_for_update())
             row = await db.scalar(select(Outbox).where(Outbox.id == job.id).with_for_update())
             now = await database_now(db)
-            if row.execution_status == "running" and row.lease_until <= now:
+            if row and row.execution_status == "running" and row.lease_until <= now:
                 row.execution_status, row.owner_token = "unknown", None
                 row.finished_at = now
                 row.error = "任务执行者退出，调用结果未知；请确认后手动重试"

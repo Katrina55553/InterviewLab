@@ -52,7 +52,7 @@ async def dispatch_once() -> int:
         async with async_session_maker() as db, db.begin():
             now = await database_now(db)
             job = await db.scalar(select(Outbox).where(Outbox.id == job_id).with_for_update())
-            if job.delivery_owner != owner or job.delivery_lease_until <= now or job.execution_status != "queued":
+            if not job or job.delivery_owner != owner or job.delivery_lease_until <= now or job.execution_status != "queued":
                 continue
             job.delivery_lease_until = now + timedelta(seconds=30)
         published = False
@@ -70,7 +70,7 @@ async def dispatch_once() -> int:
         async with async_session_maker() as db, db.begin():
             now = await database_now(db)
             job = await db.scalar(select(Outbox).where(Outbox.id == job_id).with_for_update())
-            if job.delivery_owner != owner or job.delivery_lease_until <= now:
+            if not job or job.delivery_owner != owner or job.delivery_lease_until <= now:
                 continue
             job.delivery_owner, job.delivery_lease_until = None, None
             if published:

@@ -7,8 +7,10 @@ import httpx
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
+from sqlalchemy import event, func, select
 
 from app.platform import auth, community
+from app.platform.models import CommunityComment, CommunityLike, CommunityTag
 from tests.platform_db import isolated_database, postgres_test_url
 
 
@@ -17,6 +19,14 @@ async def community_clients(request, tmp_path, monkeypatch):
     if request.param == "postgresql" and not postgres_test_url():
         pytest.skip("Set PLATFORM_TEST_DATABASE_URL for real PostgreSQL community tests")
     async with isolated_database(request.param, tmp_path) as database:
+        if request.param == "sqlite":
+            @event.listens_for(database.engine.sync_engine, "connect")
+            def enable_foreign_keys(connection, _record):
+                cursor = connection.cursor()
+                cursor.execute("PRAGMA foreign_keys = ON")
+                cursor.close()
+
+            await database.engine.dispose()
         monkeypatch.setattr(auth, "async_session_maker", database.sessions)
         monkeypatch.setattr(community, "async_session_maker", database.sessions)
         monkeypatch.setattr(auth, "get_redis", lambda: (_ for _ in ()).throw(RuntimeError("test offline")))
@@ -171,3 +181,107 @@ async def test_filters_pagination_ranking_and_literal_search(community_clients):
     assert (await first.get("/api/community/posts", params={"company": "测试公司", "q": "面试 Java"})).json()["total"] == 2
     meta = (await first.get("/api/community/meta")).json()
     assert meta["myPosts"] == 7 and meta["topics"][0] == {"tag": "JavaScript", "count": 5}
+
+
+@pytest.mark.asyncio
+async def test_edit_and_delete_require_owner_login_and_csrf(community_clients):
+    first, second = community_clients
+    await register(first, "community_owner")
+    post, body = await publish(first)
+    path = f"/api/community/posts/{post['id']}"
+    fields = {key: value for key, value in body.items() if key != "id"}
+    assert (await second.put(path, json=fields)).status_code == 401
+    assert (await second.delete(path)).status_code == 401
+    assert (await first.put(path, json=fields)).status_code == 403
+    assert (await first.delete(path)).status_code == 403
+    await register(second, "community_reader")
+    assert (await second.put(path, json=fields, headers=csrf(second))).status_code == 403
+    assert (await second.delete(path, headers=csrf(second))).status_code == 403
+    assert (await first.get(path)).json() == post
+    missing = f"/api/community/posts/{uuid4()}"
+    assert (await first.put(missing, json=fields, headers=csrf(first))).status_code == 404
+    assert (await first.delete(missing, headers=csrf(first))).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_edit_preserves_identity_engagement_and_private_draft(community_clients):
+    first, second = community_clients
+    await register(first, "community_owner")
+    await register(second, "community_reader")
+    post, body = await publish(first)
+    path = f"/api/community/posts/{post['id']}"
+    fields = {key: value for key, value in body.items() if key != "id"}
+    await second.put(path + "/like", headers=csrf(second))
+    comment = {"id": str(uuid4()), "content": "原有评论需要保留"}
+    await second.post(path + "/comments", json=comment, headers=csrf(second))
+    draft = {**post_body(title="另一篇未发布面经"), "tags": "草稿", "version": 0}
+    saved = (await first.put("/api/community/draft", json=draft, headers=csrf(first))).json()
+    fields.update(title="  修改后的面试复盘  ", company="新公司", role="前端工程师", direction="前端开发",
+                  stage="社招 · 终面", outcome="已拿 Offer", tags=["React", "React", "新话题"],
+                  content="## 更新复盘\n补充前端面试的具体题目、回答过程，以及后续需要改进的准备方向。")
+    for _ in range(2):
+        response = await first.put(path, json=fields, headers=csrf(first))
+        assert response.status_code == 200, response.text
+        updated = response.json()
+        assert updated["title"] == fields["title"].strip()
+        for key in ("company", "role", "direction", "stage", "outcome", "content"):
+            assert updated[key] == fields[key]
+        assert set(updated["tags"]) == {"React", "新话题"}
+        for key in ("id", "authorId", "author", "createdAt", "featured"):
+            assert updated[key] == post[key]
+        assert updated["likes"] == 1 and updated["commentCount"] == 1 and not updated["liked"]
+    assert (await second.get(path)).json()["liked"] is True
+    assert (await second.get(path)).json()["content"] == fields["content"]
+    assert (await second.get(path + "/comments")).json()["items"][0]["content"] == comment["content"]
+    assert (await first.get("/api/community/draft")).json() == saved
+    assert (await second.get("/api/community/posts?topic=Java")).json()["total"] == 0
+    feed = (await second.get("/api/community/posts", params={"q": "修改后", "topic": "React"})).json()
+    assert feed["total"] == 1 and feed["items"][0]["title"] == fields["title"].strip()
+    assert (await first.get("/api/community/meta")).json()["companies"] == ["新公司"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_edits_leave_post_and_tags_unchanged(community_clients):
+    first, _ = community_clients
+    await register(first, "community_owner")
+    post, body = await publish(first)
+    path = f"/api/community/posts/{post['id']}"
+    fields = {key: value for key, value in body.items() if key != "id"}
+    for invalid in ({"title": "  "}, {"content": "太短"}, {"company": ""}, {"stage": " "},
+                    {"direction": "invalid"}, {"outcome": "invalid"}, {"tags": ["x" * 33]},
+                    {"tags": [str(index) for index in range(6)]}, {"authorId": "forged"},
+                    {"featured": True}, {"id": str(uuid4())}, {"draftVersion": 1}):
+        response = await first.put(path, json={**fields, **invalid}, headers=csrf(first))
+        assert response.status_code == 422, response.text
+        assert (await first.get(path)).json() == post
+    response = await first.put(path, json={**fields, "tags": []}, headers=csrf(first))
+    assert response.status_code == 200 and response.json()["tags"] == []
+
+
+@pytest.mark.asyncio
+async def test_delete_cascades_engagement_and_refreshes_feeds_and_counts(community_clients):
+    first, second = community_clients
+    await register(first, "community_owner")
+    await register(second, "community_reader")
+    post, _ = await publish(first)
+    other, _ = await publish(second, company="保留公司", tags=["保留话题"])
+    path = f"/api/community/posts/{post['id']}"
+    await second.put(path + "/like", headers=csrf(second))
+    await second.post(path + "/comments", json={"id": str(uuid4()), "content": "随帖子删除"}, headers=csrf(second))
+    response = await first.delete(path, headers=csrf(first))
+    assert response.status_code == 204 and not response.content
+    assert (await second.get(path)).status_code == 404
+    assert (await second.get(path + "/comments")).status_code == 404
+    assert (await second.put(path + "/like", headers=csrf(second))).status_code == 404
+    assert (await second.post(path + "/comments", json={"id": str(uuid4()), "content": "不能添加"}, headers=csrf(second))).status_code == 404
+    assert (await first.delete(path, headers=csrf(first))).status_code == 404
+    assert (await first.get("/api/community/posts?tab=mine")).json()["total"] == 0
+    assert (await second.get("/api/community/posts?tab=liked")).json()["total"] == 0
+    assert (await first.get("/api/community/meta")).json() == {
+        "companies": ["保留公司"], "topics": [{"tag": "保留话题", "count": 1}], "myPosts": 0, "myLikes": 0,
+    }
+    assert (await second.get("/api/community/meta")).json()["myLikes"] == 0
+    assert (await second.get(f"/api/community/posts/{other['id']}")).status_code == 200
+    async with community.async_session_maker() as db:
+        for model in (CommunityTag, CommunityLike, CommunityComment):
+            assert await db.scalar(select(func.count()).select_from(model).where(model.post_id == post["id"])) == 0

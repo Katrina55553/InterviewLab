@@ -15,7 +15,7 @@ from openai import APIConnectionError
 from app.platform import runtime
 from app.platform.ai import execution, guard
 from app.platform.contracts import PlatformError
-from app.platform.models import Agent, UserAISettings, UserModelCredential
+from app.platform.models import Agent, UserAISettings, UserModelCredential, UserVisionSettings
 
 
 def usage(prompt, completion):
@@ -333,7 +333,7 @@ class ConfigSession:
         return SimpleNamespace(all=lambda: self.agents)
 
     async def get(self, model, key):
-        return self.personal
+        return None if model is UserVisionSettings else self.personal
 
     async def scalar(self, statement):
         return self.credential

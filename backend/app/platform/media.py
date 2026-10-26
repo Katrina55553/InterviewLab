@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select, text, update
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
@@ -21,6 +21,7 @@ from app.platform.ai.guard import gate
 from app.platform.auth import check_csrf, current_user, websocket_user
 from app.platform.contracts import PlatformError, error_payload
 from app.platform.media_asr import TranscriptAssembler, asr_signed_url, check_asr_error, decode_packet
+from app.platform.media_locks import try_media_lock as _try_lock
 from app.platform.media_models import MediaTask, VisionFeedback
 from app.platform.media_tts import (
     TTS_CREATE,
@@ -30,7 +31,7 @@ from app.platform.media_tts import (
     tts_create_body,
     tts_request,
 )
-from app.platform.models import Agent, Interview, User, UserAISettings, new_id, utcnow
+from app.platform.models import Agent, Interview, User, new_id, utcnow
 from app.platform.runtime import AIError, call_scope, complete_vision
 
 router = APIRouter(tags=["platform-media"])
@@ -53,24 +54,14 @@ def _require_speech() -> tuple[str, str, str]:
     return credentials
 
 
-async def owned_interview(db, interview_id: str, user_id: str) -> Interview:
-    interview = (await db.execute(select(Interview).where(
+async def owned_interview(db, interview_id: str, user_id: str, *, lock: bool = False) -> Interview:
+    query = select(Interview).where(
         Interview.id == interview_id, Interview.user_id == user_id,
-    ))).scalar_one_or_none()
+    )
+    interview = (await db.execute(query.with_for_update() if lock else query)).scalar_one_or_none()
     if interview is None:
         raise HTTPException(404, "面试记录不存在")
     return interview
-
-
-def _lock_id(namespace: str, resource_id: str) -> int:
-    return int.from_bytes(hashlib.sha256(f"{namespace}:{resource_id}".encode()).digest()[:8], "big", signed=True)
-
-
-async def _try_lock(db, namespace: str, resource_id: str) -> bool:
-    """Connection-bound PostgreSQL lock: releases on rollback/crash, no Redis dependency."""
-    return bool((await db.execute(text("SELECT pg_try_advisory_xact_lock(:key)"), {
-        "key": _lock_id(namespace, resource_id),
-    })).scalar_one())
 
 
 @router.get("/media/capabilities")
@@ -81,8 +72,10 @@ async def capabilities(interview_id: str | None = None, _user: User = Depends(cu
             vision_enabled = bool((interview.config_snapshot.get("vision") or {}).get("enabled"))
         else:
             agent = (await db.execute(select(Agent).where(Agent.scene == "vision"))).scalar_one_or_none()
-            personal = await db.get(UserAISettings, _user.id)
-            vision_enabled = bool(personal and personal.vision and (agent is None or agent.enabled))
+            from app.platform.vision_settings import resolve_vision
+
+            connection, _ = await resolve_vision(db, _user.id)
+            vision_enabled = bool(connection and (agent is None or agent.enabled))
     configured = all(_credentials())
     return {"asr": configured, "tts": configured, "vision": vision_enabled}
 
@@ -128,6 +121,8 @@ async def asr_socket(websocket: WebSocket, interview_id: str) -> None:
                 if getattr(websocket.state, "platform_identity", None) is not None:
                     del websocket.state.platform_identity
                 await websocket_user(websocket)
+                async with async_session_maker() as db:
+                    await owned_interview(db, interview_id, user.id)
 
             await _run_asr_stream(websocket, upstream, str(provider_sid), first, tasks, revalidate=revalidate)
     except WebSocketDisconnect:
@@ -262,7 +257,7 @@ async def create_tts(body: TTSRequest, user: User = Depends(current_user)) -> di
     voice = getattr(settings, "XFYUN_TTS_VOICE", "x4_mingge")
     text_hash = hashlib.sha256(f"{voice}\0{body.text}".encode()).hexdigest()
     async with async_session_maker() as db:
-        await owned_interview(db, body.interview_id, user.id)
+        await owned_interview(db, body.interview_id, user.id, lock=True)
         task = (await db.execute(select(MediaTask).where(
             MediaTask.user_id == user.id, MediaTask.interview_id == body.interview_id,
             MediaTask.text_hash == text_hash,
@@ -319,6 +314,15 @@ async def query_tts(task_id: str, user: User = Depends(current_user)) -> dict:
             task.status, task.error = "unknown", "合成请求被中断，结果未知；未自动重试"
             await db.commit()
         if task.status != "processing" or not await _try_lock(db, "tts-query", task.id):
+            return _tts_json(task)
+        # Deletion takes the same advisory lock. Re-read after acquiring it so
+        # a query that waited behind deletion cannot recreate an orphan file.
+        task = await db.scalar(select(MediaTask).where(
+            MediaTask.id == task_id, MediaTask.user_id == user.id,
+        ).execution_options(populate_existing=True))
+        if task is None:
+            raise HTTPException(404, "语音任务不存在")
+        if task.status != "processing":
             return _tts_json(task)
         app_id, api_key, api_secret = _require_speech()
         try:
@@ -384,6 +388,7 @@ async def analyze_frame(interview_id: str, file: UploadFile = File(...),
             return {"feedback": None, "available": False, "error": "本次面试未配置视觉模型"}
         if not await _try_lock(db, "vision", interview_id):
             raise HTTPException(409, "上一帧仍在分析中")
+        await owned_interview(db, interview_id, user.id)
         latest = (await db.execute(select(VisionFeedback).where(
             VisionFeedback.interview_id == interview_id,
         ).order_by(VisionFeedback.created_at.desc()).limit(1))).scalar_one_or_none()
@@ -406,7 +411,8 @@ async def analyze_frame(interview_id: str, file: UploadFile = File(...),
         except Exception:
             raise HTTPException(502, "视觉服务暂时不可用，文本和语音面试可继续") from None
         record = VisionFeedback(
-            id=new_id(), interview_id=interview_id, user_id=user.id, provider_id=config["provider_id"],
+            # Historical column name: personal runs identify the actual private connection.
+            id=new_id(), interview_id=interview_id, user_id=user.id, provider_id=config["user_provider_id"],
             provider_version=str(config.get("provider_version", 0)), feedback=feedback,
         )
         db.add(record)

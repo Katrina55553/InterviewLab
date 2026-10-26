@@ -14,6 +14,7 @@ let connected: Set<string>;
 let subscriptionConnected: boolean;
 let authorizationStatus: string;
 let catalogFailure: boolean;
+let revocation: 'revoked' | 'unconfirmed';
 let modelCatalogs: Record<string, { id: string; name: string }[]>;
 const selection = { connectionType: 'builtin', authMethod: 'api-key', providerId: 'deepseek', modelId: 'deepseek-flash' } as const;
 const subscriptionSelection = { connectionType: 'builtin', authMethod: 'oauth', providerId: 'openai', modelId: 'account-model' } as const;
@@ -41,6 +42,7 @@ beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   state = { selection: null, version: 0, has_key: false, allowed_base_urls: ['https://api.deepseek.com'] }; connected = new Set();
   subscriptionConnected = false; authorizationStatus = 'pending';
+  revocation = 'revoked';
   catalogFailure = false;
   modelCatalogs = Object.fromEntries(apiProviders.map(provider => [provider.id, provider.id === 'deepseek'
     ? [{ id: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash' }, { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro' }]
@@ -51,6 +53,7 @@ beforeEach(() => {
       return json(state);
     }
     if (url === '/api/settings/ai') return json(state);
+    if (url === '/api/settings/ai/vision') return json({ selection: null, enabled: false, verified: false, version: 0, tested_at: null });
     if (url === '/api/settings/ai/providers') return json([...apiProviders.map(provider => ({ ...provider, auth: { apiKey: { label: `${provider.name} API Key`, interactive: true } } })), { id: 'openai', name: 'ChatGPT', auth: { oauth: { label: 'Continue with ChatGPT', isSubscription: true } } }]);
     if (url === '/api/settings/ai/models?provider_id=openai') return json(subscriptionConnected ? [{ id: 'account-model', name: '账户模型', providerId: 'openai', input: ['text'], reasoning: false, contextWindow: 8192, maxTokens: 4096 }] : []);
     if (url.startsWith('/api/settings/ai/models')) {
@@ -59,7 +62,16 @@ beforeEach(() => {
       return json(connected.has(providerId) ? (modelCatalogs[providerId] ?? []).map(model => ({ ...model, providerId, input: ['text'], reasoning: false, contextWindow: 8192, maxTokens: 4096 })) : []);
     }
     if (url === '/api/settings/ai/connect') { const { providerId } = JSON.parse(options!.body as string); connected.add(providerId); return json({ providerId, auth: { state: 'configured', method: 'api-key' } }) }
-    if (url === '/api/settings/ai/auth?provider_id=openai') return json({ state: subscriptionConnected ? 'configured' : 'unconfigured', method: 'oauth' });
+    if (url === '/api/settings/ai/auth?provider_id=openai') {
+      if (options?.method === 'DELETE') {
+        subscriptionConnected = false;
+        state = { ...state, selection: null, version: 0, has_key: false };
+        return json({ state: 'unconfigured', method: 'oauth', revocation, message: revocation === 'revoked'
+          ? '已断开连接，并已撤销 OpenAI 授权。'
+          : '已断开本站连接，但未能确认 OpenAI 授权已撤销。请到 ChatGPT 设置中断开此应用。' });
+      }
+      return json({ state: subscriptionConnected ? 'configured' : 'unconfigured', method: 'oauth' });
+    }
     if (url.startsWith('/api/settings/ai/auth')) return json({ state: connected.has(new URL(url, 'http://test').searchParams.get('provider_id')!) ? 'configured' : 'unconfigured', method: 'api-key' });
     if (url === '/api/settings/ai/oauth/start') return json({ session_id: 'test-authorization', authorization_url: 'https://auth.openai.com/authorize?state=test', redirect_uri: 'http://127.0.0.1:8000/api/settings/ai/oauth/callback', expires_in: 600 });
     if (url === '/api/settings/ai/oauth/test-authorization/complete') { subscriptionConnected = true; authorizationStatus = 'completed'; return json({ providerId: 'openai', auth: { state: 'configured', method: 'oauth' } }) }
@@ -189,7 +201,7 @@ it('keeps manual model entry and refresh available when the provider catalog fai
   expect(state.selection?.modelId).toBe('manual-account-model');
   catalogFailure = false;
   await click('刷新模型'); await settle();
-  expect(container.textContent).not.toContain('模型列表读取失败');
+  expect(container.querySelector('.ai-model-settings')?.textContent).not.toContain('模型列表读取失败');
   const restored = container.querySelector<HTMLInputElement>('input[aria-label="模型名称"]')!;
   expect(restored.value).toBe('manual-account-model');
   await act(async () => restored.focus());
@@ -252,4 +264,23 @@ it('restores a saved subscription in the subscription tab without starting OAuth
   expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('ChatGPT 订阅登录');
   expect(container.querySelector('.ai-current-connection')?.textContent).toContain('ChatGPT 计划');
   expect(vi.mocked(fetch).mock.calls.some(([url]) => url === '/api/settings/ai/oauth/start')).toBe(false);
+});
+
+it.each(['revoked', 'unconfirmed'] as const)('shows %s revocation after disconnecting a subscription and clearing the saved model', async result => {
+  revocation = result;
+  state = { ...state, selection: subscriptionSelection, version: 2 }; subscriptionConnected = true;
+  await act(async () => root.render(<AISettingsPage />)); await settle(); await settle();
+  await click('断开认证'); await settle();
+  expect(subscriptionConnected).toBe(false);
+  expect(state.selection).toBeNull();
+  expect(container.querySelector('.ai-current-connection')?.textContent).toContain('尚未选择模型');
+  if (result === 'revoked') {
+    expect(container.querySelector('.notice-success')?.textContent).toContain('已撤销 OpenAI 授权');
+  } else {
+    expect(container.querySelector('.notice-info')?.textContent).toContain('未能确认 OpenAI 授权已撤销');
+    expect(container.querySelector('.notice-info')?.textContent).toContain('ChatGPT 设置');
+    expect(container.querySelector('.notice-success')).toBeNull();
+  }
+  await click('连接');
+  expect(container.querySelector('.ai-settings-page > .notice-info')).toBeNull();
 });

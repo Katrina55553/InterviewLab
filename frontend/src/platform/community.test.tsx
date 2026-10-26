@@ -40,6 +40,7 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
   HTMLDialogElement.prototype.showModal = function () { this.open = true };
   HTMLDialogElement.prototype.close = function () { this.open = false };
+  vi.spyOn(window, 'confirm').mockReturnValue(true);
   useAuth.setState({ user: { id: 'user-a', username: '测试同学', role: 'user' }, loading: false });
   calls.length = 0; failRead = false; failWrite = false; draft = { draft: null, version: 0 }; comments = []; liked = false;
   posts = Array.from({ length: 7 }, (_, index) => ({ id: index === 0 ? firstId : `11111111-1111-4111-8111-${String(index).padStart(12, '0')}`, authorId: 'author', author: '分享者', title: `后端面试复盘 ${index}`, company: index < 2 ? '腾讯' : '测试公司', role: '后端工程师', direction: '后端开发', stage: '校招 · 一面', outcome: '持续复盘', tags: index < 2 ? ['Java'] : ['Python'], summary: '一段来自服务端的面经摘要', content: '## 面试背景\n这次面试围绕系统设计展开，需要补充具体的指标和验证过程。', createdAt: '2026-10-24T06:00:00Z', likes: 0, liked: false, commentCount: 0, featured: false }));
@@ -70,6 +71,16 @@ beforeEach(() => {
     if (url.pathname.endsWith('/comments')) {
       if (method === 'POST') { const item = { ...body, author: user.username, createdAt: '2026-10-24T08:00:00Z' }; comments.push(item); return json(item, 201) }
       return json({ items: comments, total: comments.length, page: 1, hasMore: false });
+    }
+    if (method === 'PUT' || method === 'DELETE') {
+      if (post.authorId !== user.id) return json({ detail: '只能编辑或删除自己发布的面经' }, 403);
+      if (method === 'PUT') {
+        Object.assign(post, body, { summary: body.content });
+        return json(view(post));
+      }
+      posts = posts.filter(item => item.id !== post.id);
+      if (post.id === firstId) { liked = false; comments = [] }
+      return new Response(null, { status: 204 });
     }
     return json(view(post));
   }));
@@ -141,5 +152,93 @@ describe('server-backed community', () => {
     expect(container.querySelector('dialog[open]')).not.toBeNull();
     expect(container.querySelector<HTMLInputElement>('.community-editor input')!.value).toBe('不能丢失的草稿');
     expect(container.querySelector('[role="alert"]')!.textContent).toContain('服务暂时不可用');
+  });
+  it('only offers edit and delete actions for the current author in the feed and reader', async () => {
+    await mount(`/community?post=${firstId}`);
+    expect(container.querySelector('[aria-label^="编辑面经："]')).toBeNull();
+    expect(container.querySelector('[aria-label^="删除面经："]')).toBeNull();
+    await act(async () => useAuth.setState({ user: { id: 'author', username: '分享者', role: 'user' } }));
+    expect(container.querySelectorAll('.community-post-management')).toHaveLength(6);
+    expect(container.querySelector('.community-reader [aria-label^="编辑面经："]')).not.toBeNull();
+    expect(container.querySelector('.community-reader [aria-label^="删除面经："]')).not.toBeNull();
+  });
+  it('edits a published post from the feed without publishing again or changing an unpublished draft', async () => {
+    posts[0].authorId = 'user-a';
+    const savedDraft: CommunityDraft = { id: 'another-draft', title: '未发布草稿', company: '', role: '', direction: '前端开发', stage: '校招 · 一面', outcome: '持续复盘', tags: '', content: '' };
+    draft = { draft: savedDraft, version: 3 };
+    await mount(); await click('编辑面经：后端面试复盘 0');
+    expect(container.querySelector<HTMLInputElement>('.community-editor input')!.value).toBe(posts[0].title);
+    expect(container.querySelector<HTMLTextAreaElement>('#community-post-content')!.value).toBe(posts[0].content);
+    await input('.community-editor input', '补充后的面经');
+    await input('.community-editor input[placeholder^="用逗号"]', 'React、新话题');
+    await input('#community-post-content', '## 新的复盘\n补充这次面试的详细思考过程，以及具体的改进方法和准备建议。');
+    await click('预览排版');
+    expect(container.querySelector('.community-markdown-preview h2')!.textContent).toBe('新的复盘');
+    await submit('.community-editor form');
+    expect(container.querySelector('dialog')).toBeNull();
+    expect(cards()[0].textContent).toContain('补充后的面经');
+    expect(cards()[0].textContent).toContain('新话题');
+    expect(container.querySelector('.community-feedback')!.textContent).toBe('面经已更新');
+    const edited = calls.find(call => call.method === 'PUT' && call.path === `/api/community/posts/${firstId}`)!;
+    expect(edited.body?.tags).toEqual(['React', '新话题']);
+    expect(edited.body).not.toHaveProperty('id'); expect(edited.body).not.toHaveProperty('draftVersion');
+    expect(calls.filter(call => call.method !== 'GET')).toEqual([edited]);
+    expect(posts).toHaveLength(7); expect(draft).toEqual({ draft: savedDraft, version: 3 });
+    await click('发布面经');
+    expect(container.querySelector<HTMLInputElement>('.community-editor input')!.value).toBe('未发布草稿');
+  });
+  it('cancels editing from the reader without saving and shows updated details after a successful edit', async () => {
+    posts[0].authorId = 'user-a'; liked = true;
+    posts[0].tags = ['算法 / AI', '系统 设计'];
+    comments = [{ id: 'comment', author: '读者', content: '保留的评论', createdAt: '2026-10-24T08:00:00Z' }];
+    await mount(`/community?post=${firstId}`);
+    await act(async () => container.querySelector<HTMLButtonElement>('.community-reader [aria-label^="编辑面经："]')!.click());
+    await input('.community-editor input', '放弃的修改'); await click('取消编辑');
+    expect(container.querySelector('.community-reader h1')!.textContent).toBe('后端面试复盘 0');
+    expect(calls.filter(call => call.method !== 'GET')).toHaveLength(0);
+    await act(async () => container.querySelector<HTMLButtonElement>('.community-reader [aria-label^="编辑面经："]')!.click());
+    await input('.community-editor input', '保存的修改');
+    await submit('.community-editor form');
+    expect(container.querySelector('.community-reader h1')!.textContent).toBe('保存的修改');
+    expect(posts[0].tags).toEqual(['算法 / AI', '系统 设计']);
+    expect(container.querySelector('.community-reader-actions [aria-pressed="true"]')!.textContent).toContain('1');
+    expect(container.querySelector('.community-comments article')!.textContent).toContain('保留的评论');
+    expect(container.querySelector('.community-reader [role="status"]')!.textContent).toBe('面经已更新');
+  });
+  it('keeps edits on a failed save and permits retry', async () => {
+    posts[0].authorId = 'user-a';
+    await mount(); await click('编辑面经：后端面试复盘 0'); await input('.community-editor input', '等待重试的修改');
+    failWrite = true; await submit('.community-editor form');
+    expect(container.querySelector('.community-editor [role="alert"]')!.textContent).toContain('服务暂时不可用');
+    expect(container.querySelector<HTMLInputElement>('.community-editor input')!.value).toBe('等待重试的修改');
+    expect(posts[0].title).toBe('后端面试复盘 0');
+    failWrite = false; await submit('.community-editor form');
+    expect(container.querySelector('dialog')).toBeNull(); expect(posts[0].title).toBe('等待重试的修改');
+  });
+  it('confirms deletion, refreshes personal counts, and returns from an emptied last page', async () => {
+    posts.forEach(post => { post.authorId = 'user-a' });
+    await mount(); await click('我的面经'); await click('下一页'); expect(cards()).toHaveLength(2);
+    vi.mocked(window.confirm).mockReturnValueOnce(false);
+    await click('删除面经：后端面试复盘 5');
+    expect(calls.filter(call => call.method === 'DELETE')).toHaveLength(0); expect(cards()).toHaveLength(2);
+    await click('删除面经：后端面试复盘 5'); expect(cards()).toHaveLength(1);
+    await click('删除面经：后端面试复盘 6'); expect(cards()).toHaveLength(5);
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('点赞和评论将永久删除'));
+    expect(container.querySelector('.community-pagination')!.textContent).toContain('第 1 / 1 页');
+    expect(container.querySelector('.community-personal-stats strong')!.textContent).toBe('5');
+    expect(container.querySelector('.community-feedback')!.textContent).toBe('面经已删除');
+  });
+  it('preserves the post on deletion failure and closes its reader after retry succeeds', async () => {
+    posts[0].authorId = 'user-a';
+    await mount(`/community?post=${firstId}`);
+    failWrite = true;
+    await act(async () => container.querySelector<HTMLButtonElement>('.community-reader [aria-label^="删除面经："]')!.click());
+    expect(container.querySelector('.community-reader [role="alert"]')!.textContent).toContain('服务暂时不可用');
+    expect(container.querySelector('.community-reader h1')).not.toBeNull(); expect(posts).toHaveLength(7);
+    failWrite = false;
+    await act(async () => container.querySelector<HTMLButtonElement>('.community-reader [aria-label^="删除面经："]')!.click());
+    expect(container.querySelector('dialog')).toBeNull(); expect(posts).toHaveLength(6);
+    expect(container.textContent).not.toContain('后端面试复盘 0');
+    expect(container.querySelector('.community-feedback')!.textContent).toBe('面经已删除');
   });
 });

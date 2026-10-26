@@ -1,8 +1,11 @@
 import type { ReactNode } from 'react';
 import Markdown from 'react-markdown';
 
-export function Icon({ name, size = 20 }: { name: 'arrow' | 'upload' | 'chat' | 'file' | 'spark' | 'settings' | 'mic' | 'camera' | 'volume' | 'close' | 'check' | 'clock' | 'plus' | 'menu' | 'sidebar' | 'logout' | 'clipboard' | 'scan' | 'briefcase' | 'headphones' | 'chevron' | 'star' | 'fork' | 'search' | 'bookmark' | 'like' | 'pencil' | 'trend' | 'book' | 'filter'; size?: number }) {
+export function Icon({ name, size = 20 }: { name: 'arrow' | 'upload' | 'chat' | 'file' | 'spark' | 'settings' | 'mic' | 'camera' | 'volume' | 'close' | 'check' | 'clock' | 'plus' | 'menu' | 'sidebar' | 'logout' | 'clipboard' | 'scan' | 'briefcase' | 'headphones' | 'chevron' | 'star' | 'fork' | 'search' | 'bookmark' | 'like' | 'pencil' | 'trend' | 'book' | 'filter' | 'more' | 'pin' | 'trash'; size?: number }) {
   const paths = {
+    more: 'M5 12h.01M12 12h.01M19 12h.01',
+    pin: 'm16 3 5 5-4 1-3 5v3l-3-3-5-3 3-3 1-4 6-1ZM3 21l6-6',
+    trash: 'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7',
     search: 'm21 21-5-5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z',
     bookmark: 'M6 3h12v18l-6-4-6 4V3Z',
     like: 'M7 10v11H3V10h4Zm0 1 5-8a2 2 0 0 1 2 2v4h5a2 2 0 0 1 2 2l-2 8a2 2 0 0 1-2 2H7',

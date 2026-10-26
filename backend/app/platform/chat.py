@@ -52,8 +52,22 @@ class MessageCreate(BaseModel):
         return value  # Preserve original input for exact idempotency comparison.
 
 
+class ChatUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str | None = Field(default=None, max_length=255)
+    is_pinned: bool | None = Field(default=None, strict=True)
+
+    @field_validator("title", "is_pinned")
+    @classmethod
+    def nonempty(cls, value):
+        if value is None or isinstance(value, str) and not value.strip():
+            raise ValueError("对话名称和置顶状态不能为空")
+        return value.strip() if isinstance(value, str) else value
+
+
 def chat_json(chat: Chat) -> dict:
-    return {"id": chat.id, "agent_id": chat.agent_id, "title": chat.title, "created_at": chat.created_at.isoformat()}
+    return {"id": chat.id, "agent_id": chat.agent_id, "title": chat.title,
+            "is_pinned": chat.is_pinned, "created_at": chat.created_at.isoformat()}
 
 
 def message_json(message: ChatMessage, *, expired_request: str | None = None) -> dict:
@@ -84,7 +98,7 @@ def _active(chat: Chat) -> bool:
 async def list_chats(user: User = Depends(current_user)) -> list[dict]:
     async with async_session_maker() as db:
         rows = (await db.scalars(select(Chat).where(Chat.user_id == user.id).order_by(
-            Chat.created_at.desc(), Chat.id.desc(),
+            Chat.is_pinned.desc(), Chat.created_at.desc(), Chat.id.desc(),
         ).limit(100))).all()
         return [chat_json(chat) for chat in rows]
 
@@ -129,6 +143,16 @@ async def get_chat(chat_id: str, user: User = Depends(current_user)) -> dict:
         ).limit(1000))).all()
         expired = chat.active_request_id if chat.active_request_id and not _active(chat) else None
         return {**chat_json(chat), "messages": [message_json(message, expired_request=expired) for message in messages]}
+
+
+@router.patch("/{chat_id}", dependencies=[Depends(check_csrf)])
+async def update_chat(chat_id: str, body: ChatUpdate, user: User = Depends(current_user)) -> dict:
+    async with async_session_maker() as db, db.begin():
+        row = await _owned_chat(db, chat_id, user.id, lock=True)
+        for name, value in body.model_dump(exclude_unset=True).items():
+            setattr(row, name, value)
+        await db.flush()
+        return chat_json(row)
 
 
 @router.delete("/{chat_id}", status_code=204, dependencies=[Depends(check_csrf)])
@@ -197,7 +221,9 @@ async def _claim(chat_id: str, user_id: str, body: MessageCreate) -> StreamClaim
         owner_token = secrets.token_urlsafe(32)
         chat.active_request_id, chat.owner_token = body.request_id, owner_token
         chat.lease_until = now + timedelta(seconds=CHAT_LEASE_SECONDS)
-        if chat.title == "新对话":
+        if chat.title == "新对话" and not await db.scalar(select(ChatMessage.id).where(
+            ChatMessage.chat_id == chat_id, ChatMessage.role == "user",
+        ).limit(1)):
             chat.title = body.content.strip()[:60]
         db.add(ChatMessage(id=new_id(), chat_id=chat_id, role="user", content=body.content, status="completed",
                            request_id=body.request_id, created_at=now))

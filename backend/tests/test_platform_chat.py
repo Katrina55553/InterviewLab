@@ -11,8 +11,11 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 import pytest_asyncio
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from alembic.script import ScriptDirectory
 from fastapi import FastAPI, HTTPException
-from sqlalchemy import func, select, text, update
+from sqlalchemy import create_engine, func, inspect, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.database import Base
@@ -83,9 +86,82 @@ async def test_chat_requires_identity_and_csrf(chat_client):
     client, _ = chat_client
     assert (await client.get("/api/chats")).status_code == 401
     assert (await client.post("/api/chats", json={})).status_code == 401
+    assert (await client.patch("/api/chats/unknown", json={"title": "改名"})).status_code == 401
     await register(client)
     assert (await client.post("/api/chats", json={})).status_code == 403
     assert (await client.post("/api/chats", json={}, headers=csrf(client))).status_code == 201
+    record = await create(client)
+    assert (await client.patch(f"/api/chats/{record['id']}", json={"is_pinned": True})).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_chat_metadata_is_persisted_and_pins_sort_before_recent_chats(chat_client):
+    client, sessions = chat_client
+    user = await register(client)
+    older = await create(client)
+    newer = await create(client)
+    assert older["is_pinned"] is False
+    assert [row["id"] for row in (await client.get("/api/chats")).json()] == [newer["id"], older["id"]]
+    claim = await chat._claim(older["id"], user["id"], chat.MessageCreate(content="first", request_id="request-metadata"))
+    changed = await client.patch(f"/api/chats/{older['id']}", json={"title": "  秋招岗位分析  ", "is_pinned": True}, headers=csrf(client))
+    assert changed.status_code == 200
+    assert changed.json()["title"] == "秋招岗位分析"
+    assert changed.json()["is_pinned"] is True
+    assert [row["id"] for row in (await client.get("/api/chats")).json()] == [older["id"], newer["id"]]
+    # Metadata edits do not replace the ongoing reply's lease or messages.
+    async with sessions() as db:
+        saved = await db.get(Chat, older["id"])
+        assert saved.owner_token == claim.owner_token
+        assert saved.title == "秋招岗位分析" and saved.is_pinned is True
+    assert await chat._checkpoint(claim, "reply", status="completed") is True
+    assert (await client.get(f"/api/chats/{older['id']}")).json()["messages"][-1]["content"] == "reply"
+    assert (await client.patch(f"/api/chats/{older['id']}", json={"is_pinned": False}, headers=csrf(client))).status_code == 200
+    rows = (await client.get("/api/chats")).json()
+    assert [row["id"] for row in rows] == [newer["id"], older["id"]]
+    assert rows[-1]["title"] == "秋招岗位分析"
+    # An explicit rename to the placeholder text must survive subsequent messages.
+    await client.patch(f"/api/chats/{older['id']}", json={"title": "新对话"}, headers=csrf(client))
+    followup = await chat._claim(older["id"], user["id"], chat.MessageCreate(content="follow up", request_id="request-after-rename"))
+    assert (await client.get(f"/api/chats/{older['id']}")).json()["title"] == "新对话"
+    assert await chat._checkpoint(followup, "reply", status="completed") is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [{"title": " "}, {"title": ""}, {"title": "x" * 256}, {"title": None},
+                                 {"is_pinned": None}, {"is_pinned": "false"}, {"user_id": "another-user"}])
+async def test_chat_update_rejects_invalid_metadata(chat_client, body):
+    client, _ = chat_client
+    await register(client)
+    record = await create(client)
+    assert (await client.patch(f"/api/chats/{record['id']}", json=body, headers=csrf(client))).status_code == 422
+    saved = (await client.get(f"/api/chats/{record['id']}")).json()
+    assert saved["title"] == "新对话" and saved["is_pinned"] is False
+
+
+def test_chat_pinning_migration_keeps_existing_titles_and_messages(tmp_path):
+    scripts = ScriptDirectory(str(Path(__file__).resolve().parents[1] / "migrations"))
+    engine = create_engine(f"sqlite:///{tmp_path / 'chat-migration.db'}")
+    try:
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            for revision in reversed(list(scripts.walk_revisions())):
+                if revision.revision == "20261025_0010":
+                    break
+                revision.module.upgrade()
+            connection.execute(text("INSERT INTO platform_users (id, username, password_hash, role, created_at) "
+                                    "VALUES ('u', 'owner', 'hash', 'user', CURRENT_TIMESTAMP)"))
+            connection.execute(text("INSERT INTO platform_chats (id, user_id, title, created_at) "
+                                    "VALUES ('c', 'u', '已有对话', CURRENT_TIMESTAMP)"))
+            connection.execute(text("INSERT INTO platform_chat_messages (id, chat_id, role, content, status, created_at) "
+                                    "VALUES ('m', 'c', 'user', '已有消息', 'completed', CURRENT_TIMESTAMP)"))
+            migration = scripts.get_revision("20261025_0010").module
+            migration.upgrade()
+            assert connection.execute(text("SELECT title, is_pinned FROM platform_chats")).one() == ("已有对话", 0)
+            assert connection.execute(text("SELECT content FROM platform_chat_messages")).scalar_one() == "已有消息"
+            migration.downgrade()
+            assert "is_pinned" not in {column["name"] for column in inspect(connection).get_columns("platform_chats")}
+            assert connection.execute(text("SELECT title FROM platform_chats")).scalar_one() == "已有对话"
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -268,6 +344,7 @@ async def test_cross_user_chat_history_send_delete_and_attachment_are_denied(cha
     await register(client, "another_owner")
     assert (await client.get("/api/chats")).json() == []
     assert (await client.get(f"/api/chats/{record['id']}")).status_code == 404
+    assert (await client.patch(f"/api/chats/{record['id']}", json={"title": "stolen", "is_pinned": True}, headers=csrf(client))).status_code == 404
     assert (await client.delete(f"/api/chats/{record['id']}", headers=csrf(client))).status_code == 404
     assert (await client.post(f"/api/chats/{record['id']}/messages", json={
         "content": "hello", "request_id": "request-stolen",

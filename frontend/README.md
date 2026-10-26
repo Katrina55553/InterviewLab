@@ -103,6 +103,7 @@ Vitest 覆盖 CSRF / multipart、中文 SSE 分块、事件版本排序、48k/44
 $env:E2E_BASE_URL = "http://127.0.0.1:18080"
 npx playwright install chromium
 npm run test:e2e
+npm run test:e2e:chat
 # 设置 E2E_ADMIN_USERNAME / E2E_ADMIN_PASSWORD 后：
 npm run test:e2e:admin
 ```
@@ -110,6 +111,8 @@ npm run test:e2e:admin
 脚本未设置 `E2E_BASE_URL` 时仍默认 `http://127.0.0.1:5173`。普通 Vite 开发服务会对未知路径回退到 SPA，完整管理员验收中的 `/metrics` 返回 404 等路由边界断言需通过 Nginx 入口验证。
 
 Linux CI 使用 `npx playwright install --with-deps chromium` 安装浏览器及系统依赖。脚本默认使用已安装的本地 Playwright；`PLAYWRIGHT_MODULE` 可指定宿主已有包的绝对路径。截图默认写入忽略提交的 `test-results/`，可用 `E2E_OUTPUT` 指定其他目录。
+
+聊天管理脚本 `npm run test:e2e:chat` 自建临时账户，先检查 PATCH 路由和 API，再通过 Chromium 登录、上传附件、发送 SSE 消息、使用菜单重命名与置顶/取消置顶，刷新确认排序与消息保持；还覆盖空名称、取消、键盘菜单、移动端菜单边界，以及删除非当前/当前对话后列表与路由恢复。该套件要求显式演示环境，CI 使用 `TEST_DEMO_MODE=true` 的隔离栈，无需真实模型凭据。脚本清理测试对话并退出登录，保留 `chat-management.json`、`chat-management-*.png` 与 `chat-management-trace.zip`；失败截图为 `chat-management-failure.png`。可用 `npx playwright show-trace test-results/chat-management-trace.zip` 查看操作过程。CI 的 Docker 作业运行该脚本，成功和失败均上传 `engineering-evidence`。
 
 普通用户脚本自建测试账号，验证注册、登录、上传到报告、刷新恢复、追问与换问、主动跳过零分、提前结束、SSE 对话与移动端。管理脚本需要 `E2E_ADMIN_USERNAME` / `E2E_ADMIN_PASSWORD` 指向隔离环境中的一次性管理员；可先在 `backend` 运行 `python -m app.platform.cli create-admin --username <测试管理员名>` 创建。脚本验证密钥不回传、编辑保留密钥、`scene=null` 独立 Agent、启停与工具配置，并清理本次创建的配置。
 

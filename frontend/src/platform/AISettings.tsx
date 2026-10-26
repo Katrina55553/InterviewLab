@@ -6,9 +6,10 @@ import './ai-settings.css';
 import { api } from './api';
 import { useResource } from './hooks';
 import { createUserModelAdapter } from './modelAdapter';
-import type { AIConnectionState, AIProvider, OAuthAuthorization } from './modelAdapter';
+import type { AIConnectionState, AIProvider, DisconnectStatus, OAuthAuthorization } from './modelAdapter';
 import { APIKeyConnection } from './APIKeyConnection';
 import { SubscriptionAuthorization } from './SubscriptionAuthorization';
+import { VisionSettings } from './VisionSettings';
 import { Icon, Loading, Notice } from './ui';
 
 type ConnectionMode = 'subscription' | 'api-key';
@@ -27,10 +28,17 @@ export function AISettingsPage() {
   const [authorization, setAuthorization] = useState<OAuthAuthorization | null>(null);
   const [draft, setDraft] = useState<ModelSelection | null>(null);
   const [connectionVersion, setConnectionVersion] = useState(0);
-  const adapter = useMemo(() => createUserModelAdapter(async () => { setDraft(null); return refresh() }, setAuthorization), [refresh]);
+  const [disconnectNotice, setDisconnectNotice] = useState<DisconnectStatus | null>(null);
   const [success, setSuccess] = useState('');
+  const adapter = useMemo(() => createUserModelAdapter(async result => {
+    setDraft(null); setSuccess(''); setDisconnectNotice(result);
+    setConnectionVersion(version => version + 1);
+    if (result.method === 'oauth') setMode('subscription');
+    return refresh();
+  }, session => { setDisconnectNotice(null); setSuccess(''); setAuthorization(session) }), [refresh]);
   const connected = useCallback(() => {
     setAuthorization(null);
+    setDisconnectNotice(null);
     setDraft({ connectionType: 'builtin', authMethod: 'oauth', providerId: 'openai', modelId: '' });
     setMode('subscription');
     setConnectionVersion(version => version + 1);
@@ -39,6 +47,7 @@ export function AISettingsPage() {
   const save = async (selection: ModelSelection) => {
     if (!data) return;
     setSuccess('');
+    setDisconnectNotice(null);
     const saved = await api<AIConnectionState>('/settings/ai', { method: 'PUT', body: { selection, expected_version: data.version } });
     setData(saved);
     setDraft(null);
@@ -54,6 +63,7 @@ export function AISettingsPage() {
     </header>
     {error && <Notice>{error}<button className="text-button" onClick={() => void refresh()}>重新加载</button></Notice>}
     {success && <Notice tone="success">{success}</Notice>}
+    {disconnectNotice?.message && <Notice tone={disconnectNotice.revocation === 'unconfirmed' ? 'info' : 'success'}>{disconnectNotice.message}</Notice>}
     {!data ? !error && <Loading text="正在读取模型设置…" /> : <>
       <section className={`ai-current-connection${data.selection ? ' is-configured' : ''}`} aria-labelledby="ai-current-model">
         <div className="ai-model-summary">
@@ -84,7 +94,7 @@ export function AISettingsPage() {
           <div role="tabpanel" id="ai-connection-content" aria-labelledby={`ai-tab-${activeMode}`}>
             {activeMode === 'api-key' ? <>
               {providersError && <Notice>{providersError}<button className="text-button" onClick={() => void refreshProviders()}>重新加载</button></Notice>}
-              {!providers ? !providersError && <Loading text="正在读取服务商…" /> : <APIKeyConnection key={`${data.version}:${data.selection?.providerId ?? 'new'}`} providers={providers.filter(provider => provider.auth.apiKey?.interactive)} value={data.selection} adapter={adapter} onSave={save} />}
+              {!providers ? !providersError && <Loading text="正在读取服务商…" /> : <APIKeyConnection key={`${data.version}:${data.selection?.providerId ?? 'new'}`} providers={providers.filter(provider => provider.auth.apiKey?.interactive)} value={data.selection} adapter={adapter} onSave={save} onConnected={() => setConnectionVersion(version => version + 1)} />}
             </> : <ModelSettingsPanel key={`${activeMode}:${data.version}:${data.selection?.providerId ?? 'new'}:${connectionVersion}`} className="ai-embedded-kit" defaultMode={activeMode} adapter={adapter} value={draft ?? data.selection} onSave={save}
               text={{ noProviders: '暂无支持此认证方式的服务商，请选择其他连接方式。', noModels: '连接后选择可用模型；若列表为空，请重新连接或重试。', subscriptionTitle: '使用 ChatGPT 订阅', subscriptionDescription: '点击「连接」发起 OpenAI 授权。登录完成后选择模型并保存，后续请求使用你的 ChatGPT 计划额度。' }} />}
           </div>
@@ -105,6 +115,7 @@ export function AISettingsPage() {
           </section>
         </aside>
       </div>
+      {providers && <VisionSettings key={connectionVersion} providers={providers} adapter={adapter} />}
       <p className="ai-settings-footnote"><ShieldIcon />连接仅保存认证信息，点击「保存」才会切换当前模型。</p>
     </>}
   </div>;

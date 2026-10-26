@@ -70,11 +70,14 @@ async def freeze_configs(agent_id: str | None = None, *, user_id: str) -> dict:
     """Copy encrypted credentials/config versions so admin edits cannot alter a run."""
     from app.core.tools import get_tools
     from app.platform.user_settings import ModelSelection, config_for
+    from app.platform.vision_settings import resolve_vision
 
     async with async_session_maker() as db:
         agents = list((await db.scalars(select(Agent))).all())
         personal = await db.get(UserAISettings, user_id)
-        connection = await config_for(db, user_id, ModelSelection.model_validate(personal.selection)) if personal and personal.selection else None
+        selection = ModelSelection.model_validate(personal.selection) if personal and personal.selection else None
+        connection = await config_for(db, user_id, selection) if selection else None
+        visual_connection, visual_selection = await resolve_vision(db, user_id, personal)
     if not connection and not settings.PLATFORM_DEMO_MODE:
         raise PlatformError("AI_CONFIGURATION_ERROR", "请先在「AI 设置」中配置你自己的模型和 API Key", status=409,
                             retry_policy="never")
@@ -86,7 +89,9 @@ async def freeze_configs(agent_id: str | None = None, *, user_id: str) -> dict:
             agent = next((a for a in agents if a.id == agent_id), None)
             if not agent or not agent.enabled:
                 raise AIError("所选 Agent 不可用")
-        scene_enabled = (agent.enabled if agent else True) and (scene != "vision" or bool(personal and personal.vision))
+        scene_connection = visual_connection if scene == "vision" else connection
+        scene_selection = visual_selection if scene == "vision" else selection
+        scene_enabled = (agent.enabled if agent else True) and (scene != "vision" or visual_connection is not None)
         configs[scene] = {
             "scene": scene,
             "agent_id": agent.id if agent else None,
@@ -97,17 +102,17 @@ async def freeze_configs(agent_id: str | None = None, *, user_id: str) -> dict:
                 if scene in ("questions", "evaluate", "chat") else []
             ),
             "enabled": scene_enabled,
-            "base_url": connection["base_url"] if connection else "",
-            "model": connection["model"] if connection else "",
+            "base_url": scene_connection["base_url"] if scene_connection else "",
+            "model": scene_connection["model"] if scene_connection else "",
             "provider_id": None,
-            "provider_version": connection["provider_version"] if connection else 0,
-            "user_provider_id": connection["user_provider_id"] if connection else None,
+            "provider_version": scene_connection["provider_version"] if scene_connection else 0,
+            "user_provider_id": scene_connection["user_provider_id"] if scene_connection else None,
             "credential_owner_id": user_id,
-            "encrypted_key": connection["encrypted_key"] if connection else None,
-            "auth_method": connection["auth_method"] if connection else "api-key",
-            "oauth_scope": connection.get("oauth_scope") if connection else None,
+            "encrypted_key": scene_connection["encrypted_key"] if scene_connection else None,
+            "auth_method": scene_connection["auth_method"] if scene_connection else "api-key",
+            "oauth_scope": scene_connection.get("oauth_scope") if scene_connection else None,
             "max_output_tokens": min(settings.AI_MAX_OUTPUT_TOKENS,
-                personal.selection["custom"]["model"]["maxTokens"] if personal and (personal.selection or {}).get("custom")
+                scene_selection.custom.model.maxTokens if scene_selection and scene_selection.custom
                 else settings.AI_MAX_OUTPUT_TOKENS),
         }
     return configs

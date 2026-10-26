@@ -19,7 +19,7 @@ from app.core.config import settings
 from app.platform import auth, runtime, subscription_client, subscriptions, user_settings
 from app.platform.admin import decrypt_key, encrypt_key
 from app.platform.contracts import PlatformError
-from app.platform.models import AiCall, UserModelCredential, UserOAuthSession
+from app.platform.models import AiCall, UserAISettings, UserModelCredential, UserOAuthSession
 from app.platform.oauth_oidc import ISSUER, JWKS_URL
 from tests.platform_db import isolated_database, postgres_test_url
 from tests.test_user_model_connections import register
@@ -53,7 +53,8 @@ async def oauth(request, tmp_path, monkeypatch, signing_key):
         monkeypatch.setattr(settings, "AUTH_COOKIE_SECURE", False)
         state = SimpleNamespace(nonce="", grants=0, refreshes=0, calls=[], claims={}, scope=subscriptions.SCOPES,
                                 terminal="response.completed", token_error=False, signature_invalid=False, tool_once=False,
-                                refresh_started=None, refresh_continue=None)
+                                refresh_started=None, refresh_continue=None, revocations=[], revocation_results=[],
+                                discovery_endpoint=ISSUER + "/api/accounts/oauth/revoke", discoveries=0)
         numbers = signing_key.public_key().public_numbers()
         jwk = {"kty": "RSA", "kid": "test-key", "alg": "RS256", "use": "sig",
                "n": encoded(numbers.n.to_bytes(256)), "e": encoded(numbers.e.to_bytes(3))}
@@ -67,6 +68,17 @@ async def oauth(request, tmp_path, monkeypatch, signing_key):
             return header + "." + body + "." + encoded(signature)
 
         async def upstream(request):
+            if str(request.url) == subscriptions.DISCOVERY_URL:
+                state.discoveries += 1
+                return httpx.Response(200, json={"issuer": ISSUER, "revocation_endpoint": state.discovery_endpoint})
+            if str(request.url) == ISSUER + "/api/accounts/oauth/revoke":
+                assert request.method == "POST" and not request.url.query
+                assert request.headers["content-type"] == "application/x-www-form-urlencoded"
+                state.revocations.append(parse_qs(request.content.decode()))
+                result = state.revocation_results.pop(0) if state.revocation_results else 200
+                if result == "network":
+                    raise httpx.ReadTimeout("private-refresh must-not-leak", request=request)
+                return httpx.Response(result, content=b"" if result == 200 else b"private-refresh must-not-leak")
             if str(request.url) == JWKS_URL:
                 return httpx.Response(200, json={"keys": [jwk]})
             if str(request.url) == subscriptions.TOKEN_URL:
@@ -93,6 +105,9 @@ async def oauth(request, tmp_path, monkeypatch, signing_key):
                 state.calls.append(json.loads(request.content))
                 events = [{"type": "response.output_text.delta", "delta": "OK"},
                           {"type": state.terminal, "response": {"usage": {"input_tokens": 2, "output_tokens": 1, "total_tokens": 3}}}]
+                if any(isinstance(item.get("content"), list) and any(part.get("type") == "input_image"
+                       for part in item["content"]) for item in state.calls[-1]["input"]):
+                    events[0]["delta"] = "RED"
                 if state.tool_once and len(state.calls) == 1:
                     events[0] = {"type": "response.output_item.done", "output_index": 0, "item": {
                         "type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "lookup_resume_field",
@@ -134,6 +149,31 @@ async def saved_config(oauth):
     result = await oauth.client.put("/api/settings/ai", json={"selection": SELECTION, "expected_version": 0})
     assert result.status_code == 200, result.text
     return owner, (await runtime.freeze_configs(user_id=owner))["chat"]
+
+
+@pytest.mark.asyncio
+async def test_subscription_visual_probe_uses_image_responses_and_survives_normal_token_refresh(oauth, monkeypatch):
+    from app.platform import vision_settings
+
+    monkeypatch.setattr(vision_settings, "async_session_maker", oauth.database.sessions)
+    owner, _ = await saved_config(oauth)
+    result = await oauth.client.post("/api/settings/ai/vision/probe", json=SELECTION)
+    assert result.status_code == 200 and result.json()["state"] == "reachable", result.text
+    request = oauth.calls[-1]
+    assert request["store"] is False and request["input"][0]["content"][1]["type"] == "input_image"
+    saved = await oauth.client.put("/api/settings/ai/vision", json={"enabled": True, "selection": SELECTION,
+        "expected_version": 0, "probe_token": result.json()["probe_token"]})
+    assert saved.status_code == 200, saved.text
+    frozen = await runtime.freeze_configs(user_id=owner)
+    assert frozen["vision"]["enabled"] is True and frozen["vision"]["auth_method"] == "oauth"
+    assert frozen["vision"]["encrypted_key"] is None
+    async with oauth.database.sessions() as db, db.begin():
+        credential = await db.get(UserModelCredential, frozen["vision"]["user_provider_id"])
+        credential.version += 1
+    assert (await oauth.client.get("/api/settings/ai/vision")).json()["verified"] is True
+    assert (await oauth.client.delete("/api/settings/ai/auth?provider_id=openai")).status_code == 200
+    state = (await oauth.client.get("/api/settings/ai/vision")).json()
+    assert state["selection"] is None and state["enabled"] is False
 
 
 @pytest.mark.asyncio
@@ -270,12 +310,89 @@ async def test_refresh_failure_preserves_tokens_and_logout_fences_a_late_refresh
     oauth.refresh_started, oauth.refresh_continue = asyncio.Event(), asyncio.Event()
     refresh = asyncio.create_task(subscriptions.access_token(config, oauth.database.sessions))
     await asyncio.wait_for(oauth.refresh_started.wait(), 3)
-    await oauth.client.delete("/api/settings/ai/auth?provider_id=openai")
+    disconnect = asyncio.create_task(oauth.client.delete("/api/settings/ai/auth?provider_id=openai"))
+    await asyncio.sleep(.05)
+    assert not disconnect.done() and not oauth.revocations
     oauth.refresh_continue.set()
+    assert await refresh == "renewed-private-access"
+    response = await disconnect
+    assert response.json()["revocation"] == "revoked"
+    assert oauth.revocations[0]["token"] == ["renewed-private-refresh"]
     with pytest.raises(PlatformError):
-        await refresh
+        await subscriptions.access_token(config, oauth.database.sessions)
     async with oauth.database.sessions() as db:
         assert await db.get(UserModelCredential, config["user_provider_id"]) is None
+
+
+@pytest.mark.asyncio
+async def test_disconnect_revokes_oauth_clears_selection_and_cancels_pending_login(oauth):
+    owner, config = await saved_config(oauth)
+    pending, _, _ = await begin(oauth)
+    response = await oauth.client.delete("/api/settings/ai/auth?provider_id=openai")
+    assert response.status_code == 200 and response.json()["state"] == "unconfigured"
+    assert response.json()["revocation"] == "revoked"
+    assert "private-" not in response.text
+    assert oauth.revocations == [{"token": ["private-refresh"], "token_type_hint": ["refresh_token"], "client_id": ["oaiapp_test"]}]
+    async with oauth.database.sessions() as db:
+        assert await db.get(UserModelCredential, config["user_provider_id"]) is None
+        assert await db.get(UserAISettings, owner) is None
+        row = await db.get(UserOAuthSession, pending["session_id"])
+        assert row.status == "cancelled" and decrypt_key(row.encrypted_data) == "{}"
+    assert (await oauth.client.delete("/api/settings/ai/auth?provider_id=openai")).status_code == 200
+    assert len(oauth.revocations) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("results", "expected"), [([503, 502, 200], "revoked"), (["network", 200], "revoked"),
+    ([503, 503, 503], "unconfirmed"), (["network"] * 3, "unconfirmed"), ([400], "unconfirmed"), ([204], "unconfirmed")])
+async def test_disconnect_retries_transient_failures_and_reports_unconfirmed_revocation(oauth, results, expected):
+    owner, config = await saved_config(oauth)
+    oauth.revocation_results = list(results)
+    response = await oauth.client.delete("/api/settings/ai/auth?provider_id=openai")
+    assert response.status_code == 200 and response.json()["revocation"] == expected
+    assert response.json()["state"] == "unconfigured"
+    assert len(oauth.revocations) == len(results)
+    assert "private-" not in response.text and "must-not-leak" not in response.text
+    if expected == "unconfirmed":
+        assert "ChatGPT 设置" in response.json()["message"]
+    async with oauth.database.sessions() as db:
+        assert await db.get(UserModelCredential, config["user_provider_id"]) is None
+        assert await db.get(UserAISettings, owner) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["https://untrusted.example/revoke", "http://auth.openai.com/revoke",
+                                    "https://auth.openai.com/revoke?token=secret", None])
+async def test_disconnect_never_sends_tokens_to_untrusted_discovery_endpoint(oauth, endpoint):
+    await saved_config(oauth)
+    oauth.discovery_endpoint = endpoint
+    response = await oauth.client.delete("/api/settings/ai/auth?provider_id=openai")
+    assert response.status_code == 200 and response.json()["revocation"] == "unconfirmed"
+    assert not oauth.revocations
+
+
+@pytest.mark.asyncio
+async def test_disconnect_removes_undecryptable_credentials_without_reporting_remote_success(oauth):
+    _, config = await saved_config(oauth)
+    async with oauth.database.sessions() as db, db.begin():
+        row = await db.get(UserModelCredential, config["user_provider_id"])
+        row.encrypted_key = "invalid-ciphertext"
+    response = await oauth.client.delete("/api/settings/ai/auth?provider_id=openai")
+    assert response.status_code == 200 and response.json()["revocation"] == "unconfirmed"
+    assert not oauth.revocations and not oauth.discoveries
+
+
+@pytest.mark.asyncio
+async def test_disconnect_requires_csrf_and_cannot_revoke_another_users_grant(oauth):
+    _, config = await saved_config(oauth)
+    csrf = oauth.client.headers.pop("X-CSRF-Token")
+    assert (await oauth.client.delete("/api/settings/ai/auth?provider_id=openai")).status_code == 403
+    oauth.client.headers["X-CSRF-Token"] = csrf
+    await register(oauth.client, "another_owner")
+    assert (await oauth.client.delete("/api/settings/ai/auth?provider_id=openai")).status_code == 200
+    assert not oauth.revocations
+    async with oauth.database.sessions() as db:
+        assert await db.get(UserModelCredential, config["user_provider_id"]) is not None
 
 
 @pytest.mark.asyncio

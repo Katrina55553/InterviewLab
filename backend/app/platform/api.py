@@ -17,17 +17,19 @@ from fastapi import (
     WebSocketDisconnect,
     WebSocketException,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from sqlalchemy import select
 
 from app.core.database import async_session_maker
-from app.platform.auth import current_user, websocket_user
+from app.platform.auth import check_csrf, current_user, websocket_user
 from app.platform.contracts import PlatformError, error_payload, traced
 from app.platform.models import Agent, Interview, Resume, ResumeDiagnosis, User, new_id
 from app.platform.runtime import freeze_configs
 from app.platform.service import (
     create_interview,
+    delete_interview,
+    delete_resume,
     events_after,
     execute_command,
     get_interview,
@@ -117,6 +119,12 @@ async def download_resume(resume_id: str, user: User = Depends(current_user)):
     return FileResponse(row.file_path, filename=row.filename)
 
 
+@router.delete("/resumes/{resume_id}", status_code=204, dependencies=[Depends(check_csrf)])
+async def remove_resume(resume_id: str, user: User = Depends(current_user)):
+    await delete_resume(user.id, resume_id)
+    return Response(status_code=204)
+
+
 @router.post("/resumes/{resume_id}/retry")
 async def retry_preparation(resume_id: str, user: User = Depends(current_user)):
     return await retry_resume(user.id, resume_id)
@@ -142,6 +150,12 @@ async def new_interview(body: StartInterview, user: User = Depends(current_user)
 @router.get("/interviews/{interview_id}")
 async def interview_snapshot(interview_id: str, user: User = Depends(current_user)):
     return await get_interview(user.id, interview_id)
+
+
+@router.delete("/interviews/{interview_id}", status_code=204, dependencies=[Depends(check_csrf)])
+async def remove_interview(interview_id: str, user: User = Depends(current_user)):
+    await delete_interview(user.id, interview_id)
+    return Response(status_code=204)
 
 
 @router.post("/interviews/{interview_id}/commands")

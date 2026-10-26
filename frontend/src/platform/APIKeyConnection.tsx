@@ -19,9 +19,10 @@ interface Props {
   value: ModelSelection | null;
   adapter: ModelSettingsAdapter;
   onSave: (selection: ModelSelection) => Promise<void>;
+  onConnected?: () => void;
 }
 
-export function APIKeyConnection({ providers, value, adapter, onSave }: Props) {
+export function APIKeyConnection({ providers, value, adapter, onSave, onConnected }: Props) {
   const initial = value?.connectionType === 'builtin' && value.authMethod === 'api-key' ? value : null;
   const [providerId, setProviderId] = useState(initial?.providerId ?? 'deepseek');
   const provider = providers.find(item => item.id === providerId) ?? providers[0];
@@ -102,6 +103,7 @@ export function APIKeyConnection({ providers, value, adapter, onSave }: Props) {
         if (!controller.signal.aborted) {
           setAuth(result.auth); setProbe(null); setHasDraftKey(false);
           if (keyInput.current) keyInput.current.value = '';
+          onConnected?.();
           setCatalog(null);
           if (result.auth.state === 'configured') await loadModels(controller.signal);
         }

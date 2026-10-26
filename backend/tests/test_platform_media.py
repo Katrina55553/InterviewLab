@@ -410,6 +410,7 @@ async def test_vision_uses_audited_gateway_with_owner_and_frozen_prompt(monkeypa
     assert "不打分" in seen[0][0]["prompt"]
     assert seen[0][1].startswith("data:image/jpeg;base64,")
     persisted = session.add.call_args.args[0]
+    assert persisted.provider_id == config["user_provider_id"]
     assert persisted.feedback == result["feedback"]
     assert not hasattr(persisted, "image")
     assert runtime._call_context.get() is None

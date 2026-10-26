@@ -32,7 +32,11 @@ function Modal({ title, className = '', busy = false, onClose, children }: { tit
   </dialog>;
 }
 
-function PostCard({ post, busy, onOpen, onLike }: { post: CommunityPost; busy: boolean; onOpen: () => void; onLike: () => void }) {
+function PostManagement({ post, busy, onEdit, onDelete }: { post: CommunityPost; busy: boolean; onEdit: () => void; onDelete: () => void }) {
+  return <div className="community-post-management"><button type="button" disabled={busy} aria-label={`编辑面经：${post.title}`} onClick={onEdit}><Icon name="pencil" size={14} />编辑</button><button type="button" className="community-delete" disabled={busy} aria-label={`删除面经：${post.title}`} onClick={onDelete}><Icon name="trash" size={14} />删除</button></div>;
+}
+
+function PostCard({ post, busy, owned, onOpen, onLike, onEdit, onDelete }: { post: CommunityPost; busy: boolean; owned: boolean; onOpen: () => void; onLike: () => void; onEdit: () => void; onDelete: () => void }) {
   return <article className={`community-post${post.featured ? ' community-post-featured' : ''}`}>
     <div className="community-post-meta"><span className={`community-company company-${post.direction === '前端开发' ? 'mint' : post.direction === '后端开发' ? 'blue' : 'peach'}`} aria-hidden="true">{post.company.slice(0, 1)}</span><span>{post.company}<span className="community-meta-divider">/</span>{post.role}</span><span className="community-post-stage">{post.stage}</span><span className={`community-outcome${post.outcome === '已拿 Offer' ? ' offer' : ''}`}>{post.outcome === '已拿 Offer' && <Icon name="check" size={12} />}{post.outcome}</span></div>
     <h2><button type="button" onClick={onOpen}>{post.featured && <span className="community-featured-label">精选</span>}{post.title}</button></h2>
@@ -40,15 +44,16 @@ function PostCard({ post, busy, onOpen, onLike }: { post: CommunityPost; busy: b
     <footer className="community-post-footer"><span className="community-author"><span className={`community-avatar avatar-${post.direction === '后端开发' ? 'sand' : 'sage'}`}>{post.author.slice(0, 1)}</span><span>{post.author}</span><span className="community-post-date">{dateLabel(post.createdAt)}</span></span>
       <div className="community-post-actions"><button type="button" disabled={busy} className={post.liked ? 'is-active' : ''} aria-label={`${post.liked ? '取消点赞' : '点赞'}：${post.title}`} aria-pressed={post.liked} onClick={onLike}><Icon name="like" size={15} /><span>{post.likes}</span><span>{post.liked ? '已点赞' : '点赞'}</span></button><button type="button" aria-label={`查看评论：${post.title}`} onClick={onOpen}><Icon name="chat" size={15} /><span>{post.commentCount}</span></button></div>
     </footer>
+    {owned && <PostManagement post={post} busy={busy} onEdit={onEdit} onDelete={onDelete} />}
   </article>;
 }
 
 export function CommunityPage() {
   const user = useAuth(state => state.user);
-  return user ? <CommunityWorkspace key={user.id} username={user.username} /> : null;
+  return user ? <CommunityWorkspace key={user.id} userId={user.id} username={user.username} /> : null;
 }
 
-function CommunityWorkspace({ username }: { username: string }) {
+function CommunityWorkspace({ userId, username }: { userId: string; username: string }) {
   const [draft, setDraft] = useState(newDraft);
   const [draftVersion, setDraftVersion] = useState(0);
   const [query, setQuery] = useState('');
@@ -58,6 +63,7 @@ function CommunityWorkspace({ username }: { username: string }) {
   const [tab, setTab] = useState<FeedTab>('recommended');
   const [page, setPage] = useState(1);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [editingPost, setEditingPost] = useState<CommunityPost | null>(null);
   const [preview, setPreview] = useState(false);
   const [comment, setComment] = useState('');
   const [commentPage, setCommentPage] = useState(1);
@@ -70,6 +76,7 @@ function CommunityWorkspace({ username }: { username: string }) {
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const postId = params.get('post');
+  const editingPostId = editingPost?.id ?? null;
   const filters = new URLSearchParams({ q: query.trim(), tab, page: String(page), page_size: String(pageSize) });
   if (direction !== '全部') filters.set('direction', direction);
   if (company !== '全部公司') filters.set('company', company);
@@ -109,13 +116,35 @@ function CommunityWorkspace({ username }: { username: string }) {
     setBusy(true); setError('');
     try {
       const saved = await api<DraftResult>('/community/draft');
-      setDraft(saved.draft ?? newDraft()); setDraftVersion(saved.version); setPreview(false); setEditorOpen(true);
+      setDraft(saved.draft ?? newDraft()); setDraftVersion(saved.version); setEditingPost(null); setPreview(false); setFeedback(''); setEditorOpen(true);
+    } catch (err) { setError(errorMessage(err)) }
+    finally { setBusy(false) }
+  };
+  const editPost = async (post: CommunityPost) => {
+    if (busy || post.authorId !== userId) return;
+    setBusy(true); setError('');
+    try {
+      const full = await api<CommunityPost>(`/community/posts/${post.id}`);
+      setDraft({ id: full.id, title: full.title, company: full.company, role: full.role, direction: full.direction, stage: full.stage, outcome: full.outcome, tags: full.tags.join('、'), content: full.content ?? '' });
+      setEditingPost(full); setPreview(false); setFeedback(''); setEditorOpen(true);
+    } catch (err) { setError(errorMessage(err)) }
+    finally { setBusy(false) }
+  };
+  const deletePost = async (post: CommunityPost) => {
+    if (busy || post.authorId !== userId) return;
+    if (!window.confirm(`删除“${post.title}”？\n面经正文、点赞和评论将永久删除，无法恢复。`)) return;
+    setBusy(true); setError(''); setFeedback('');
+    try {
+      await api<void>(`/community/posts/${post.id}`, { method: 'DELETE' });
+      if (postId === post.id) closePost();
+      refresh(); setFeedback('面经已删除');
     } catch (err) { setError(errorMessage(err)) }
     finally { setBusy(false) }
   };
   const changeDraft = (next: CommunityDraft) => { setDraft(next); setError('') };
   const saveDraftAndClose = async () => {
     if (busy) return;
+    if (editingPostId) { setEditorOpen(false); setEditingPost(null); setError(''); return }
     setBusy(true); setError('');
     try {
       const saved = await api<DraftResult>('/community/draft', { method: 'PUT', body: { ...draft, version: draftVersion } });
@@ -127,11 +156,20 @@ function CommunityWorkspace({ username }: { username: string }) {
     event.preventDefault();
     if (busy) return;
     if (!draft.title.trim() || !draft.company.trim() || !draft.role.trim() || draft.content.trim().length < 20) { setError('请填写标题、公司、岗位，以及至少 20 字的面经正文。'); return }
-    const tags = [...new Set(draft.tags.split(/[,，、\s]+/).filter(Boolean))].slice(0, 5);
+    const tags = editingPost && draft.tags === editingPost.tags.join('、')
+      ? editingPost.tags
+      : [...new Set(draft.tags.split(/[,，、\s]+/).filter(Boolean))].slice(0, 5);
     setBusy(true); setError('');
     try {
-      await api<CommunityPost>('/community/posts', { method: 'POST', body: { ...draft, tags: tags.length ? tags : [draft.direction], draftVersion } });
-      setDraft(newDraft()); setDraftVersion(0); setEditorOpen(false); resetFilters(); setTab('mine'); refresh(); setFeedback('面经已发布，其他登录用户现在可以阅读、点赞和评论。');
+      if (editingPostId) {
+        const updated = await api<CommunityPost>(`/community/posts/${editingPostId}`, { method: 'PUT', body: { title: draft.title, company: draft.company, role: draft.role, direction: draft.direction, stage: draft.stage, outcome: draft.outcome, content: draft.content, tags } });
+        detail.update(value => value.id === updated.id ? updated : value);
+        setEditingPost(null); setFeedback('面经已更新');
+      } else {
+        await api<CommunityPost>('/community/posts', { method: 'POST', body: { ...draft, tags: tags.length ? tags : [draft.direction], draftVersion } });
+        setDraftVersion(0); resetFilters(); setTab('mine'); setFeedback('面经已发布，其他登录用户现在可以阅读、点赞和评论。');
+      }
+      setDraft(newDraft()); setEditorOpen(false); refresh();
     } catch (err) { setError(errorMessage(err)) }
     finally { setBusy(false) }
   };
@@ -163,7 +201,7 @@ function CommunityWorkspace({ username }: { username: string }) {
       {(hasFilters) && <div className="community-filter-summary"><span>正在查看{direction === '全部' ? '' : `「${direction}」`}{company === '全部公司' ? '' : `「${company}」`}{topic && `「话题：${topic}」`}{query && `包含「${query}」的`}面经</span><button type="button" onClick={resetFilters}>清除筛选<Icon name="close" size={12} /></button></div>}
       <div className="community-feedback" role="status">{feedback}</div>
       {displayError && !editorOpen && !postId && <Notice>{displayError}<button type="button" className="text-button" onClick={() => { setError(''); refresh() }}>重新加载</button></Notice>}
-      <div className="community-feed">{feed.loading && !feed.data && <Loading text="正在加载面经…" />}{(feed.data?.items ?? []).map(post => <PostCard key={post.id} post={post} busy={pendingLikes.includes(post.id)} onOpen={() => openPost(post.id)} onLike={() => void toggleLiked(post)} />)}
+      <div className="community-feed">{feed.loading && !feed.data && <Loading text="正在加载面经…" />}{(feed.data?.items ?? []).map(post => <PostCard key={post.id} post={post} busy={busy || pendingLikes.includes(post.id)} owned={post.authorId === userId} onOpen={() => openPost(post.id)} onLike={() => void toggleLiked(post)} onEdit={() => void editPost(post)} onDelete={() => void deletePost(post)} />)}
         {!feed.loading && !feed.error && !total && <div className="community-empty"><span><Icon name={tab === 'liked' ? 'like' : tab === 'mine' ? 'pencil' : 'search'} size={27} /></span><h2>{hasFilters ? '暂时没有找到相关面经' : tab === 'liked' ? '还没有点赞的面经' : '你的经历，也能成为别人的参考'}</h2><p>{hasFilters ? '试试其他关键词，或放宽一下筛选条件。' : tab === 'liked' ? '给有帮助的面经点个赞，就能在这里找到。' : '记录面试问题、准备方法和一点点新的收获。'}</p>{hasFilters ? <button type="button" className="btn" onClick={resetFilters}>清除筛选</button> : tab === 'liked' ? <button type="button" className="btn" onClick={() => selectTab('recommended')}>去发现面经<Icon name="arrow" size={15} /></button> : <button type="button" className="btn primary" disabled={busy} onClick={() => void openEditor()}><Icon name="plus" size={16} />写下第一篇面经</button>}</div>}
       </div>
       {total > 0 && <div className="community-pagination"><span>共 {total} 篇，当前第 {currentPage} / {pages} 页</span><nav aria-label="面经分页"><button type="button" aria-label="上一页" disabled={currentPage === 1} onClick={() => { setPage(currentPage - 1); listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}><Icon name="chevron" size={15} /></button>{pageNumbers.map(item => <button type="button" aria-label={`第 ${item} 页`} aria-current={item === currentPage ? 'page' : undefined} key={item} onClick={() => { setPage(item); listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}>{item}</button>)}<button type="button" aria-label="下一页" disabled={currentPage === pages} onClick={() => { setPage(currentPage + 1); listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}><Icon name="chevron" size={15} /></button></nav></div>}
@@ -177,7 +215,7 @@ function CommunityWorkspace({ username }: { username: string }) {
       <p className="community-aside-note">彼此启发，一起向前。<br />请勿分享个人隐私和保密信息。</p>
     </aside></div>
 
-    {editorOpen && <Modal title="分享你的面试经历" className="community-editor" busy={busy} onClose={() => void saveDraftAndClose()}><form onSubmit={event => void publish(event)}><fieldset disabled={busy}><div className="community-editor-intro"><h2>把这次经历，写给下一次出发。</h2><p>发布后所有登录用户可见。关闭时，草稿会保存到你的账号。</p></div><label>面经标题<span>必填</span><input data-community-focus required maxLength={100} value={draft.title} onChange={event => changeDraft({ ...draft, title: event.target.value })} placeholder="例如：我的前端二面复盘，有收获也有遗憾" /></label><div className="community-form-grid"><label>面试公司<input required maxLength={50} value={draft.company} onChange={event => changeDraft({ ...draft, company: event.target.value })} placeholder="例如：字节跳动" /></label><label>应聘岗位<input required maxLength={60} value={draft.role} onChange={event => changeDraft({ ...draft, role: event.target.value })} placeholder="例如：前端工程师" /></label></div><div className="community-form-grid community-form-thirds"><label>岗位方向<Select aria-label="岗位方向" value={draft.direction} onValueChange={value => changeDraft({ ...draft, direction: value as Direction })} options={directions.map(item => ({ value: item, label: item }))} /></label><label>面试阶段<Select aria-label="面试阶段" value={draft.stage} onValueChange={stage => changeDraft({ ...draft, stage })} options={['校招 · 一面', '校招 · 二面', '校招 · 三面', '实习 · 一面', '实习 · 二面', '社招 · 一面', '社招 · 二面', '社招 · 终面'].map(item => ({ value: item, label: item }))} /></label><label>面试进展<Select aria-label="面试进展" value={draft.outcome} onValueChange={value => changeDraft({ ...draft, outcome: value as Outcome })} options={outcomes.map(item => ({ value: item, label: item }))} /></label></div><label>话题标签<span>选填，最多 5 个</span><input maxLength={100} value={draft.tags} onChange={event => changeDraft({ ...draft, tags: event.target.value })} placeholder="用逗号或空格分隔，例如 React、项目深挖、校招" /></label><div className="community-content-label"><label htmlFor="community-post-content">面经正文<span>至少 20 字</span></label><button type="button" onClick={() => setPreview(value => !value)}>{preview ? '继续编辑' : '预览排版'}</button></div>{preview ? <div className="community-markdown-preview"><RichText text={draft.content || '还没有内容，先写下你的第一句话吧。'} /></div> : <textarea id="community-post-content" required minLength={20} maxLength={20000} rows={8} value={draft.content} onChange={event => changeDraft({ ...draft, content: event.target.value })} placeholder={'## 面试背景\n介绍一下岗位、轮次和准备情况…\n\n## 面试问题\n有哪些问题让你印象深刻？\n\n## 我的复盘\n有哪些收获，下次会如何准备？'} />}<div className="community-editor-hint"><span>支持 Markdown · 请避免个人隐私和保密内容</span><span>{draft.content.length.toLocaleString()} / 20,000</span></div>{error && <Notice>{error}</Notice>}<footer className="community-editor-footer"><span><Icon name="file" size={14} />草稿仅自己可见</span><div><button type="button" className="btn" onClick={() => void saveDraftAndClose()}>暂存关闭</button><button type="submit" className="btn primary"><Icon name="check" size={16} />{busy ? '正在保存…' : '发布面经'}</button></div></footer></fieldset></form></Modal>}
+    {editorOpen && <Modal title={editingPostId ? '编辑面经' : '分享你的面试经历'} className="community-editor" busy={busy} onClose={() => void saveDraftAndClose()}><form onSubmit={event => void publish(event)}><fieldset disabled={busy}><div className="community-editor-intro"><h2>{editingPostId ? '补充经历，让分享更完整。' : '把这次经历，写给下一次出发。'}</h2><p>{editingPostId ? '保存后立即更新面经，已有点赞和评论会保留。取消将放弃本次修改。' : '发布后所有登录用户可见。关闭时，草稿会保存到你的账号。'}</p></div><label>面经标题<span>必填</span><input data-community-focus required maxLength={100} value={draft.title} onChange={event => changeDraft({ ...draft, title: event.target.value })} placeholder="例如：我的前端二面复盘，有收获也有遗憾" /></label><div className="community-form-grid"><label>面试公司<input required maxLength={50} value={draft.company} onChange={event => changeDraft({ ...draft, company: event.target.value })} placeholder="例如：字节跳动" /></label><label>应聘岗位<input required maxLength={60} value={draft.role} onChange={event => changeDraft({ ...draft, role: event.target.value })} placeholder="例如：前端工程师" /></label></div><div className="community-form-grid community-form-thirds"><label>岗位方向<Select aria-label="岗位方向" value={draft.direction} onValueChange={value => changeDraft({ ...draft, direction: value as Direction })} options={directions.map(item => ({ value: item, label: item }))} /></label><label>面试阶段<Select aria-label="面试阶段" value={draft.stage} onValueChange={stage => changeDraft({ ...draft, stage })} options={['校招 · 一面', '校招 · 二面', '校招 · 三面', '实习 · 一面', '实习 · 二面', '社招 · 一面', '社招 · 二面', '社招 · 终面'].map(item => ({ value: item, label: item }))} /></label><label>面试进展<Select aria-label="面试进展" value={draft.outcome} onValueChange={value => changeDraft({ ...draft, outcome: value as Outcome })} options={outcomes.map(item => ({ value: item, label: item }))} /></label></div><label>话题标签<span>选填，最多 5 个</span><input maxLength={100} value={draft.tags} onChange={event => changeDraft({ ...draft, tags: event.target.value })} placeholder="用逗号或空格分隔，例如 React、项目深挖、校招" /></label><div className="community-content-label"><label htmlFor="community-post-content">面经正文<span>至少 20 字</span></label><button type="button" onClick={() => setPreview(value => !value)}>{preview ? '继续编辑' : '预览排版'}</button></div>{preview ? <div className="community-markdown-preview"><RichText text={draft.content || '还没有内容，先写下你的第一句话吧。'} /></div> : <textarea id="community-post-content" required minLength={20} maxLength={20000} rows={8} value={draft.content} onChange={event => changeDraft({ ...draft, content: event.target.value })} placeholder={'## 面试背景\n介绍一下岗位、轮次和准备情况…\n\n## 面试问题\n有哪些问题让你印象深刻？\n\n## 我的复盘\n有哪些收获，下次会如何准备？'} />}<div className="community-editor-hint"><span>支持 Markdown · 请避免个人隐私和保密内容</span><span>{draft.content.length.toLocaleString()} / 20,000</span></div>{error && <Notice>{error}</Notice>}<footer className="community-editor-footer"><span><Icon name="file" size={14} />{editingPostId ? '保存后所有登录用户可见' : '草稿仅自己可见'}</span><div><button type="button" className="btn" onClick={() => void saveDraftAndClose()}>{editingPostId ? '取消编辑' : '暂存关闭'}</button><button type="submit" className="btn primary"><Icon name="check" size={16} />{busy ? '正在保存…' : editingPostId ? '保存修改' : '发布面经'}</button></div></footer></fieldset></form></Modal>}
 
     {postId && !editorOpen && <Modal title="面经详情" className="community-reader" busy={busy} onClose={closePost}>
       {!activePost && detail.loading && <Loading text="正在加载面经全文…" />}
@@ -186,7 +224,7 @@ function CommunityWorkspace({ username }: { username: string }) {
         <div className="community-reader-kicker"><span>{activePost.company} / {activePost.role}</span><span className="community-outcome">{activePost.stage}</span></div>
         <h1>{activePost.title}</h1><div className="community-reader-author"><span className="community-avatar avatar-sage">{activePost.author.slice(0, 1)}</span><strong>{activePost.author}</strong><time dateTime={activePost.createdAt}>{new Date(activePost.createdAt).toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' })}</time></div>
         <div className="community-post-tags">{activePost.tags.map(tag => <span key={tag}>{tag}</span>)}</div><RichText text={activePost.content ?? ''} />
-        <div className="community-reader-actions"><button type="button" disabled={pendingLikes.includes(activePost.id)} className={`btn${activePost.liked ? ' community-action-selected' : ''}`} aria-pressed={activePost.liked} onClick={() => void toggleLiked(activePost)}><Icon name="like" size={16} />{activePost.liked ? '已点赞' : '点赞'} · {activePost.likes}</button></div>
+        <div className="community-reader-actions"><button type="button" disabled={busy || pendingLikes.includes(activePost.id)} className={`btn${activePost.liked ? ' community-action-selected' : ''}`} aria-pressed={activePost.liked} onClick={() => void toggleLiked(activePost)}><Icon name="like" size={16} />{activePost.liked ? '已点赞' : '点赞'} · {activePost.likes}</button>{activePost.authorId === userId && <PostManagement post={activePost} busy={busy} onEdit={() => void editPost(activePost)} onDelete={() => void deletePost(activePost)} />}</div>{feedback && <div className="community-feedback" role="status">{feedback}</div>}
         <section className="community-comments"><h2>交流与补充<span>{activePost.commentCount}</span></h2><p>交流准备思路，也欢迎补充你的面试经验。</p>
           {comments.loading && !comments.data && <Loading text="正在加载评论…" />}
           {comments.error && <Notice>{comments.error}<button type="button" className="text-button" onClick={comments.refresh}>重试</button></Notice>}

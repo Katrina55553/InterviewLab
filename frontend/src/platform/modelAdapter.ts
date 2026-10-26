@@ -21,7 +21,11 @@ export interface OAuthAuthorization {
   expires_in: number;
 }
 
-export function createUserModelAdapter(onDisconnect?: () => Promise<unknown>, onAuthorize?: (session: OAuthAuthorization) => void): ModelSettingsAdapter {
+export interface DisconnectStatus extends AuthStatus {
+  revocation?: 'revoked' | 'unconfirmed';
+}
+
+export function createUserModelAdapter(onDisconnect?: (result: DisconnectStatus) => Promise<unknown>, onAuthorize?: (session: OAuthAuthorization) => void): ModelSettingsAdapter {
   return {
     listProviders: options => api<ProviderSummary[]>('/settings/ai/providers', { signal: options?.signal }),
     listModels: async options => filterModelsByCapabilities(
@@ -45,8 +49,8 @@ export function createUserModelAdapter(onDisconnect?: () => Promise<unknown>, on
     },
     testConnection: (selection, options) => api<ProbeStatus>('/settings/ai/probe', { method: 'POST', body: selection, signal: options?.signal }),
     disconnect: async (providerId, signal) => {
-      const result = await api<AuthStatus>(`/settings/ai/auth?provider_id=${encodeURIComponent(providerId)}`, { method: 'DELETE', signal });
-      await onDisconnect?.();
+      const result = await api<DisconnectStatus>(`/settings/ai/auth?provider_id=${encodeURIComponent(providerId)}`, { method: 'DELETE', signal });
+      await onDisconnect?.(result);
       return result;
     },
   };

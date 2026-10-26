@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -56,6 +57,20 @@ class UserAISettings(Base):
     vision = Column(Boolean, nullable=False, default=False)
     version = Column(Integer, nullable=False, default=1)
     selection = Column(json_type, nullable=True)
+    updated_at = Column(DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class UserVisionSettings(Base):
+    """An independently tested visual model; selections contain no credentials."""
+
+    __tablename__ = "platform_user_vision_settings"
+
+    user_id = Column(String(36), ForeignKey("platform_users.id", ondelete="CASCADE"), primary_key=True)
+    selection = Column(json_type, nullable=True)
+    enabled = Column(Boolean, nullable=False, default=False)
+    version = Column(Integer, nullable=False, default=1)
+    probe_fingerprint = Column(String(64), nullable=True)
+    tested_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, nullable=False, default=utcnow, onupdate=utcnow)
 
 
@@ -239,6 +254,7 @@ class Chat(Base):
     user_id = Column(String(36), ForeignKey("platform_users.id", ondelete="CASCADE"), nullable=False, index=True)
     agent_id = Column(String(36), ForeignKey("platform_agents.id", ondelete="SET NULL"), nullable=True)
     title = Column(String(255), nullable=False, default="新对话")
+    is_pinned = Column(Boolean, nullable=False, default=False, server_default=false())
     active_request_id = Column(String(128), nullable=True)
     owner_token = Column(String(128), nullable=True)
     lease_until = Column(DateTime, nullable=True)

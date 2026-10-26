@@ -16,7 +16,7 @@ from app.platform.auth import current_user
 from app.platform.contracts import PlatformError
 from app.platform.model_providers import api_key_providers, provider_url
 from app.platform.model_transport import allowed_urls, validate_personal_url
-from app.platform.models import User, UserAISettings, UserModelCredential, UserOAuthSession, new_id
+from app.platform.models import User, UserAISettings, UserModelCredential, UserOAuthSession, new_id, utcnow
 
 router = APIRouter(prefix="/settings/ai", tags=["personal-ai"])
 
@@ -260,17 +260,41 @@ async def save_selection(body: SaveSelection, user: User = Depends(current_user)
 
 @router.delete("/auth")
 async def disconnect(provider_id: str = Query(max_length=2100), user: User = Depends(current_user)):
-    async with async_session_maker() as db, db.begin():
-        await db.get(User, user.id, with_for_update=True)
-        await db.execute(update(UserOAuthSession).where(UserOAuthSession.user_id == user.id,
-            UserOAuthSession.provider_id == provider_id, UserOAuthSession.status.in_(["pending", "exchanging"]))
-            .values(status="cancelled", encrypted_data=encrypt_key("{}")))
-        credential = await credential_for(db, user.id, provider_id, lock=True)
-        if credential:
-            await db.delete(credential)
-        row = await db.get(UserAISettings, user.id, with_for_update=True)
-        if row and (row.selection or {}).get("providerId") == provider_id:
-            await db.delete(row)
+    encrypted_key = None
+    deadline = time.monotonic() + 20
+    while True:
+        async with async_session_maker() as db, db.begin():
+            await db.get(User, user.id, with_for_update=True)
+            credential = await credential_for(db, user.id, provider_id, lock=True)
+            refreshing = (credential and credential.auth_method == "oauth" and credential.refresh_until
+                          and credential.refresh_until > utcnow())
+            if not refreshing:
+                await db.execute(update(UserOAuthSession).where(UserOAuthSession.user_id == user.id,
+                    UserOAuthSession.provider_id == provider_id, UserOAuthSession.status.in_(["pending", "exchanging"]))
+                    .values(status="cancelled", encrypted_data=encrypt_key("{}")))
+                if credential:
+                    if credential.auth_method == "oauth":
+                        encrypted_key = credential.encrypted_key or ""
+                    await db.delete(credential)
+                row = await db.get(UserAISettings, user.id, with_for_update=True)
+                if row and (row.selection or {}).get("providerId") == provider_id:
+                    await db.delete(row)
+                from app.platform.vision_settings import clear_provider
+
+                await clear_provider(db, user.id, provider_id)
+                break
+        # Let an in-flight refresh publish its replacement before revoking it.
+        if time.monotonic() >= deadline:
+            raise HTTPException(409, "订阅凭据仍在刷新，请稍后重试断开连接")
+        await asyncio.sleep(.1)
+    if encrypted_key is not None:
+        from app.platform.subscriptions import auth_json as oauth_auth_json
+        from app.platform.subscriptions import revoke_credentials
+
+        revoked = await revoke_credentials(encrypted_key)
+        return {**oauth_auth_json(None), "revocation": "revoked" if revoked else "unconfirmed",
+                "message": "已断开连接，并已撤销 OpenAI 授权。" if revoked else
+                "已断开本站连接，但未能确认 OpenAI 授权已撤销。请到 ChatGPT 设置中断开此应用。"}
     return auth_json(None)
 
 
