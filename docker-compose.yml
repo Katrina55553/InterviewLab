@@ -175,7 +175,30 @@ services:
     volumes:
       - ./operations/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./operations/alerts.yml:/etc/prometheus/alerts.yml:ro
-    depends_on: [metrics]
+    depends_on:
+      metrics: {condition: service_started}
+      alertmanager: {condition: service_healthy}
+
+  alertmanager:
+    mem_limit: ${MONITORING_MEMORY_LIMIT:-512m}
+    image: prom/alertmanager:v0.28.1
+    profiles: [monitoring]
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/alertmanager", "--cluster.listen-address="]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9093/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    volumes:
+      - ./operations/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - type: bind
+        source: ${ALERT_WEBHOOK_FILE:-./operations/alert-webhook.url}
+        target: /etc/alertmanager/receiver.url
+        read_only: true
+        bind:
+          create_host_path: false
+      - alertmanager:/alertmanager
+    restart: unless-stopped
 
   # PostgreSQL 数据库
   postgres:
@@ -209,6 +232,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  alertmanager:
   pgdata:
   redisdata:
   celerybeat:

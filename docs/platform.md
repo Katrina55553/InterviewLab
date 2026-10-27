@@ -53,6 +53,41 @@ python -m app.platform.cli reset-dev --confirm RESET-PLATFORM
 
 只删除新平台 `platform_` 表，不触碰旧版表，不删除原始文件。启动不会自动建表或重建数据。旧开发数据不做迁移。
 
+## 邮箱注册、登录与密码管理
+
+新账号通过邮箱验证码完成注册；登录支持用户名或已验证邮箱。已有账号的用户名登录保持可用，可到「账户安全」(`/settings/security`) 输入当前密码并验证邮箱后绑定。邮箱可以是 QQ、163、Gmail 等正常收信地址，QQ SMTP 仅作为平台发信渠道。已绑定邮箱暂不提供换绑入口。新用户名不允许包含 `@`，已有包含 `@` 的用户名继续兼容；邮箱登录不能覆盖其他账号的旧用户名。
+
+先运行 `python -m app.platform.cli migrate`，升级到 `20261026_0013`。迁移保留已有账号、密码与数据，邮箱字段初始为空，不从简历联系方式中自动绑定邮箱。
+
+在 QQ 邮箱网页版的设置中开启 IMAP/SMTP 服务，生成授权码，然后在服务器 `backend/.env` 填写：
+
+```dotenv
+SMTP_HOST=smtp.qq.com
+SMTP_PORT=465
+SMTP_SECURITY=ssl
+SMTP_USERNAME=你的QQ号@qq.com
+SMTP_PASSWORD=QQ邮箱生成的授权码
+SMTP_FROM=你的QQ号@qq.com
+SMTP_FROM_NAME=知面
+SMTP_TIMEOUT_SECONDS=10
+```
+
+`SMTP_USERNAME` 与 `SMTP_FROM` 使用同一个 QQ 邮箱；`SMTP_PASSWORD` 使用授权码。配置保留在服务器环境中，不提交 Git、不放入前端。配置后运行 `docker compose up -d --build`，或重启本地后端进程。Docker 已通过 `env_file` 加载 `backend/.env`。QQ 邮箱只适合少量发送，具体额度与风控由邮箱服务决定；开启方式见[腾讯说明](https://hiflow.tencent.com/document/applications/qq-mail/)。
+
+后端使用通用 SMTP，切换服务商时替换连接参数即可。支持 `SMTP_SECURITY=ssl`（连接即 TLS，常用端口 465）或 `starttls`（先升级 TLS 再认证，常用端口 587），始终校验证书，不降级明文认证。凭据未配齐时，`GET /api/auth/capabilities` 返回 `email_enabled=false`，注册、绑定及找回入口明确提示暂未启用，已有账号仍能登录和修改密码。配置齐全仅表示功能已配置，真实投递仍需用自己的收件邮箱测试。
+
+注册、绑定和找回使用不同用途的 6 位验证码，10 分钟有效、60 秒后可重发、最多尝试 5 次，成功后立即消费。验证码以服务端密钥计算的摘要保存在 PostgreSQL，原文只发送到目标邮箱；Redis 故障时仍由数据库限流。找回请求对未知邮箱与已绑定邮箱返回相同提示，响应完成后才在请求所属进程中投递邮件，避免 SMTP 耗时暴露账号是否存在。发送失败或进程中断不会留下可消费的未发送验证码；找回请求保留通用响应，用户未收到邮件时可在冷却结束后重试。
+
+「账户安全」通过原密码修改密码；登录页「忘记密码」通过已绑定邮箱验证码重置密码。成功后撤销该账号全部登录会话和待用验证码，要求重新登录。尚未绑定邮箱且已忘记密码的旧账号，管理员核验身份后可在服务器交互重置：
+
+```powershell
+docker compose exec backend python -m app.platform.cli reset-password --username 用户名
+# 本地：在 backend 目录运行
+python -m app.platform.cli reset-password --username 用户名
+```
+
+命令通过隐藏输入读取新密码并二次确认，不通过命令行参数传递密码，不改变账号角色、邮箱或业务数据。
+
 ## 个人模型连接
 
 所有登录账户均可使用侧栏「AI 设置」。页面提供「ChatGPT 订阅登录」和「API Key」两个入口。订阅复用 Model Connection Kit 0.1.0，前端包随仓库保存在 `frontend/vendor/`；API Key 使用宿主表单，统一通过鉴权适配器访问后端。
@@ -159,6 +194,14 @@ Outbox 与业务状态同事务提交，独立 dispatcher 发布 Celery 任务�
 作者可在列表或详情中编辑、删除自己的已发布面经，其他用户没有管理入口，服务端也会校验归属。编辑复用发布时的字段校验，保留作者、发布时间、点赞和评论；取消编辑放弃本次修改，不影响未发布草稿，保存失败保留编辑内容以便重试。删除需要确认，成功后通过数据库外键级联清理标签、点赞和评论，并刷新列表、个人计数与热门话题；删除失败保留原帖。
 
 接口为 `GET/POST /api/community/posts`、`GET/PUT/DELETE /api/community/posts/{id}`、`PUT/DELETE /api/community/posts/{id}/like`、`GET/POST /api/community/posts/{id}/comments`、`GET/PUT /api/community/draft` 与 `GET /api/community/meta`。帖子 `PUT` 接收与发布一致的内容字段，不接收 `id`、`draftVersion` 或作者等服务端字段；`DELETE` 成功返回 204。列表搜索、排序和分页在数据库执行，评论每页 30 条，统计来自实际帖子与点赞关系。
+
+面经与评论均提供「举报」入口，可选择广告垃圾、攻击辱骂、隐私泄露、违法违规或其他原因，并填写最多 1,000 字说明。「我的举报」仅展示当前账户提交的记录、处理状态与审核说明。举报按账户和目标去重，网络失败重试不会创建多条记录；提交时保存标题与正文快照，原内容后续被编辑或删除不会清除审核依据。
+
+管理员通过侧栏「社区举报与审核」进入 `/admin/community`，按待处理、已下架、已驳回或全部查看分页举报列表。每次审核必须填写说明，可下架目标内容或驳回举报；服务端校验管理员身份和 CSRF，并拒绝覆盖已完成的审核。审核记录保存处理人、处理时间与说明。同一目标的其他举报保留各自处理状态，管理员可继续逐条审核。
+
+下架为数据库软隐藏，保留正文、点赞关系、举报快照与审核记录。已下架面经不会出现在推荐、最新、搜索、我的面经、我的点赞、公司筛选或热门话题中，原详情与评论入口返回 404；下架评论从评论列表及评论数中排除。作者无法通过编辑、重复发布请求或重复评论请求恢复已下架内容。举报列表标记目标当前可见、已下架或已删除；目标已删除时仍可驳回举报，但不能再次下架。
+
+举报接口为 `POST /api/community/reports`（`id`、`targetType=post|comment`、`targetId`、`reason=spam|abuse|privacy|illegal|other`、可选 `details`），`GET /api/community/reports/mine?page=1`；审核接口为 `GET /api/community/admin/reports?status=pending|resolved|dismissed|all&page=1` 与 `POST /api/community/admin/reports/{id}/review`（`action=hide|dismiss`、必填 `note`）。两类列表每页 20 条，状态为 `pending`、`resolved`（已下架）或 `dismissed`（已驳回）。迁移 `20261026_0012` 为旧面经和评论补充默认可见状态，并创建举报表；发布时须先运行迁移，再启动新版服务。
 
 部署时先重建后端镜像，运行 `docker compose run --rm migrate`，再更新 backend、frontend 和共用该后端镜像的 Worker/巡检服务，防止迁移版本检查不一致。
 

@@ -18,6 +18,8 @@ build/
 .env
 .env.local
 .env.*.local
+operations/alert-webhook.url
+/backups/
 
 # IDE
 .vscode/

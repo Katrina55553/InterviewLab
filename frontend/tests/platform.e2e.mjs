@@ -14,9 +14,9 @@ const context = await browser.newContext({ viewport: { width: 1440, height: 1050
 const page = await context.newPage();
 const failures = [];
 page.on('pageerror', error => failures.push(error.message));
-const timestamp = Date.now();
-const username = `e2e_${timestamp}`;
-const password = `Local-e2e-${timestamp}!`;
+const username = process.env.E2E_USERNAME;
+const password = process.env.E2E_PASSWORD;
+assert.ok(username && password, 'Provide a disposable test user via E2E_USERNAME / E2E_PASSWORD.');
 const answer = '在这个项目中，我负责异步队列与接口设计。最初通过监控定位到数据库连接等待时间较长，进一步用压测复现并对比调用链。我的方案是把耗时任务改为队列执行，增加幂等键、超时与失败重试，明确任务状态，再通过固定数据集对比吞吐量和延迟。最终请求延迟下降约百分之六十，并通过故障演练验证任务不会丢失。这些结果都可以在监控与测试记录中验证。';
 
 async function snapshot(id) {
@@ -36,10 +36,9 @@ try {
   await page.goto(base);
   await page.getByRole('heading', { name: '欢迎回来' }).waitFor();
   await page.screenshot({ path: resolve(output, '01-login.png'), fullPage: true });
-  await page.getByRole('button', { name: '创建一个', exact: true }).click();
-  await page.getByLabel('用户名', { exact: true }).fill(username);
+  await page.getByLabel('用户名或邮箱', { exact: true }).fill(username);
   await page.getByLabel('密码', { exact: true }).fill(password);
-  await page.getByRole('button', { name: '创建账号', exact: true }).click();
+  await page.getByRole('button', { name: '登录知面', exact: true }).click();
   await page.getByRole('heading', { name: '简历诊断' }).waitFor();
   await page.screenshot({ path: resolve(output, '02-resumes.png'), fullPage: true });
   assert.equal(await page.getByRole('link', { name: '场景与智能体管理', exact: true }).count(), 0);
@@ -140,7 +139,7 @@ try {
   await page.getByRole('button', { name: '打开导航菜单', exact: true }).click();
   await page.getByRole('button', { name: '退出', exact: true }).click();
   await page.getByRole('heading', { name: '欢迎回来' }).waitFor();
-  await page.getByLabel('用户名', { exact: true }).fill(username);
+  await page.getByLabel('用户名或邮箱', { exact: true }).fill(username);
   await page.getByLabel('密码', { exact: true }).fill(password);
   await page.getByRole('button', { name: '登录知面', exact: true }).click();
   await page.getByRole('heading', { name: '简历诊断' }).waitFor();

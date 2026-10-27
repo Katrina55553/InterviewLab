@@ -5,6 +5,8 @@
 """
 
 import re
+from email.headerregistry import Address
+from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -48,6 +50,16 @@ class Settings(BaseSettings):
     AUTH_RATE_LIMIT_WINDOW_SECONDS: int = Field(default=900, ge=60, le=86400)
     AUTH_MAX_ATTEMPTS: int = Field(default=10, ge=1, le=100)
     AUTH_IP_MAX_ATTEMPTS: int = Field(default=60, ge=1, le=1000)
+
+    # 通用 SMTP：QQ 邮箱使用 ssl / 465，其他服务商也可使用 starttls。
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = Field(default=465, ge=1, le=65535)
+    SMTP_SECURITY: Literal["ssl", "starttls"] = "ssl"
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = Field(default="", repr=False)
+    SMTP_FROM: str = ""
+    SMTP_FROM_NAME: str = "知面"
+    SMTP_TIMEOUT_SECONDS: float = Field(default=10, ge=1, le=30)
     AI_TIMEOUT_SECONDS: int = Field(default=90, ge=1, le=600)
     AI_MAX_CONCURRENCY: int = Field(default=4, ge=1, le=64)
     AI_COMMAND_LEASE_SECONDS: int = Field(default=150, ge=10, le=1800)
@@ -108,6 +120,33 @@ class Settings(BaseSettings):
     def parse_cors_origins(cls, v: str) -> list[str]:
         """将逗号分隔的字符串解析为列表"""
         return [origin.strip() for origin in v.split(",")]
+
+    @field_validator("SMTP_HOST", "SMTP_USERNAME", "SMTP_FROM", "SMTP_FROM_NAME")
+    @classmethod
+    def validate_smtp_header_value(cls, value: str) -> str:
+        if any(ord(char) < 32 or ord(char) == 127 for char in value):
+            raise ValueError("SMTP 配置不能包含控制字符")
+        return value.strip()
+
+    @field_validator("SMTP_HOST")
+    @classmethod
+    def validate_smtp_host(cls, value: str) -> str:
+        if value and ("://" in value or any(char in value for char in "/@?# ")):
+            raise ValueError("SMTP_HOST 须为服务器域名或 IP 地址，不包含协议、路径或端口")
+        return value
+
+    @field_validator("SMTP_FROM")
+    @classmethod
+    def validate_smtp_from(cls, value: str) -> str:
+        if not value:
+            return value
+        try:
+            address = Address(addr_spec=value)
+            if not address.username or not address.domain:
+                raise ValueError
+        except (ValueError, IndexError) as exc:
+            raise ValueError("SMTP_FROM 须为完整的发信邮箱地址") from exc
+        return value
 
     @field_validator("ALLOWED_EXTENSIONS")
     @classmethod

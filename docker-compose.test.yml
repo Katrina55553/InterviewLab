@@ -4,6 +4,7 @@ x-backend: &backend
   mem_limit: 1g
   image: ${TEST_BACKEND_IMAGE:-resumeagent-engineering-backend:local}
   build: ./backend
+  command: python -m tests.engineering_runtime web
   environment: &test-env
     FORWARDED_ALLOW_IPS: "*"
     DATABASE_URL: postgresql+asyncpg://postgres:test-only@postgres:5432/resume_agent_test
@@ -12,8 +13,9 @@ x-backend: &backend
     CELERY_RESULT_BACKEND: redis://redis:6379/2
     SECRET_KEY: isolated-engineering-test-secret-key-2026
     LLM_API_KEY: test-fixture-only
-    LLM_BASE_URL: http://provider:8000/v1
+    LLM_BASE_URL: https://fixture.invalid/v1
     LLM_MODEL: test
+    USER_LLM_ALLOWED_BASE_URLS: https://fixture.invalid/v1
     PLATFORM_DEMO_MODE: ${TEST_DEMO_MODE:-false}
     AI_COMMAND_LEASE_SECONDS: 10
     AI_TIMEOUT_SECONDS: 20
@@ -113,7 +115,7 @@ services:
     volumes:
       - test-uploads:/app/uploads
       - ./backend/.test-work/faults:/faults
-    command: celery -A app.tasks.celery_app worker --loglevel=warning --concurrency=2 -Q prepare,report,default
+    command: python -m tests.engineering_runtime worker
     healthcheck:
       test: [CMD, python, -m, app.platform.operations.health]
       interval: 5s

@@ -8,13 +8,13 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 from pydantic import ValidationError
-from sqlalchemy import Column, MetaData, String, Table, select
+from sqlalchemy import Column, MetaData, String, Table, delete, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.core.database import Base, async_session_maker, engine
 from app.platform.auth import Credentials, hash_password
-from app.platform.models import Outbox, User, new_id
+from app.platform.models import EmailChallenge, LoginSession, Outbox, User, new_id
 
 
 def migrate() -> None:
@@ -23,6 +23,8 @@ def migrate() -> None:
 
 async def create_admin(username: str, password: str) -> None:
     credentials = Credentials(username=username, password=password)
+    if "@" in credentials.username:
+        raise ValueError("新用户名不能包含 @；邮箱留待登录后绑定")
     encoded = await asyncio.to_thread(hash_password, credentials.password)
     async with async_session_maker() as db:
         existing = (await db.execute(select(User).where(User.username == credentials.username))).scalar_one_or_none()
@@ -34,6 +36,23 @@ async def create_admin(username: str, password: str) -> None:
         except IntegrityError as exc:
             raise ValueError("用户名已存在") from exc
     print(f"管理员 {credentials.username} 已创建")
+
+
+async def reset_password(username: str, password: str) -> None:
+    """Operator recovery for legacy users who have no verified email."""
+    credentials = Credentials(username=username, password=password)
+    encoded = await asyncio.to_thread(hash_password, credentials.password)
+    async with async_session_maker() as db, db.begin():
+        # Updating before revocation serializes with login/password commands.
+        user_id = await db.scalar(
+            update(User).where(User.username == credentials.username)
+            .values(password_hash=encoded).returning(User.id)
+        )
+        if user_id is None:
+            raise ValueError("用户不存在")
+        await db.execute(delete(LoginSession).where(LoginSession.user_id == user_id))
+        await db.execute(delete(EmailChallenge).where(EmailChallenge.user_id == user_id))
+    print(f"用户 {credentials.username} 的密码已重置，所有登录会话及待用邮箱验证码已失效")
 
 
 async def probe_jobs():
@@ -75,6 +94,8 @@ def main() -> None:
     commands.add_parser("probe-jobs", help="验证 default、prepare、report 队列的持久任务完成")
     admin = commands.add_parser("create-admin", help="交互输入密码，创建管理员")
     admin.add_argument("--username", required=True)
+    password_reset = commands.add_parser("reset-password", help="交互重置已有用户密码并撤销全部会话")
+    password_reset.add_argument("--username", required=True)
     reset = commands.add_parser("reset-dev", help="删除并重建 platform_ 表；仅限开发环境")
     reset.add_argument("--confirm", choices=["RESET-PLATFORM"])
     args = parser.parse_args()
@@ -92,11 +113,19 @@ def main() -> None:
             if password != getpass.getpass("再次输入密码: "):
                 raise ValueError("两次密码不一致")
             asyncio.run(create_admin(args.username, password))
+        elif args.command == "reset-password":
+            password = getpass.getpass("新密码（至少 8 位）: ")
+            if password != getpass.getpass("再次输入新密码: "):
+                raise ValueError("两次密码不一致")
+            asyncio.run(reset_password(args.username, password))
         else:
             asyncio.run(reset_dev(args.confirm))
             migrate()
             print("新平台开发数据已重置；旧版表未改动")
-    except (ValueError, ValidationError) as exc:
+    except ValidationError as exc:
+        # ValidationError's default text includes input_value, including passwords.
+        parser.error("；".join(error["msg"] for error in exc.errors(include_input=False)))
+    except ValueError as exc:
         parser.error(str(exc))
 
 

@@ -11,8 +11,9 @@ const base = (process.env.E2E_BASE_URL || 'http://127.0.0.1:5173').replace(/\/$/
 const output = resolve(process.env.E2E_OUTPUT || 'test-results');
 const cookies = new Map();
 const created = new Set();
-const username = `chat_e2e_${Date.now()}`;
-const password = `Local-e2e-${randomUUID()}!`;
+const username = process.env.E2E_CHAT_USERNAME;
+const password = process.env.E2E_CHAT_PASSWORD;
+assert.ok(username && password, 'Provide a disposable test user via E2E_CHAT_USERNAME / E2E_CHAT_PASSWORD.');
 let user;
 let failure;
 let result;
@@ -96,7 +97,7 @@ async function browserAcceptance() {
   }
   try {
     await page.goto(`${base}/login`);
-    await page.getByLabel('用户名', { exact: true }).fill(username);
+    await page.getByLabel('用户名或邮箱', { exact: true }).fill(username);
     await page.getByLabel('密码', { exact: true }).fill(password);
     await mutation('/auth/login', 'POST', () => page.getByRole('button', { name: '登录知面', exact: true }).click());
     await page.getByRole('heading', { name: '简历诊断', exact: true }).waitFor();
@@ -216,7 +217,7 @@ async function browserAcceptance() {
 try {
   // This must reach the auth guard. An old deployed backend returns 405 instead.
   await request('/chats/route-probe', { method: 'PATCH', body: { title: 'probe' }, status: 401 });
-  user = await request('/auth/register', { method: 'POST', body: { username, password }, status: 201 });
+  user = await request('/auth/login', { method: 'POST', body: { username, password } });
   const older = await request('/chats', { method: 'POST', body: {}, status: 201 }); created.add(older.id);
   const newer = await request('/chats', { method: 'POST', body: {}, status: 201 }); created.add(newer.id);
   const attachment = new FormData();

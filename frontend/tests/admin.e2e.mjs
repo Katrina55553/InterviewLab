@@ -31,7 +31,7 @@ async function mutation(path, action) {
 try {
   await page.goto(`${base}/login`);
   await page.getByRole('heading', { name: '欢迎回来', exact: true }).waitFor();
-  await page.getByLabel('用户名', { exact: true }).fill(username);
+  await page.getByLabel('用户名或邮箱', { exact: true }).fill(username);
   await page.getByLabel('密码', { exact: true }).fill(password);
   const [loginResponse] = await Promise.all([
     page.waitForResponse(response => response.url().endsWith('/api/auth/login') && response.request().method() === 'POST'),

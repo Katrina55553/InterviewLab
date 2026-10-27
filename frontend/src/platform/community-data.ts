@@ -8,7 +8,7 @@ export interface CommunityPost {
   summary: string; content?: string; author: string; createdAt: string;
   likes: number; liked: boolean; commentCount: number; featured: boolean;
 }
-export interface CommunityComment { id: string; author: string; content: string; createdAt: string }
+export interface CommunityComment { id: string; authorId: string; author: string; content: string; createdAt: string }
 export interface CommunityFeed { items: CommunityPost[]; total: number; page: number; pageSize: number }
 export interface CommunityMeta { companies: string[]; topics: { tag: string; count: number }[]; myPosts: number; myLikes: number }
 export interface CommentPage { items: CommunityComment[]; total: number; page: number; hasMore: boolean }
@@ -17,3 +17,14 @@ export interface CommunityDraft {
   stage: string; outcome: Outcome; tags: string; content: string;
 }
 export interface DraftResult { draft: CommunityDraft | null; version: number }
+export const reportReasons = { spam: '广告或垃圾信息', abuse: '人身攻击或骚扰', privacy: '泄露个人隐私', illegal: '违法违规内容', other: '其他问题' } as const;
+export type ReportReason = keyof typeof reportReasons;
+export type ReportStatus = 'pending' | 'resolved' | 'dismissed';
+export interface CommunityReport {
+  id: string; targetType: 'post' | 'comment'; targetId: string; postId: string;
+  reason: ReportReason; details: string; status: ReportStatus; createdAt: string;
+  reviewedAt: string | null; reviewNote: string; targetTitle: string; targetContent: string;
+  reporter: string; reviewer: string | null; targetState: 'visible' | 'hidden' | 'deleted';
+}
+export interface ReportPage { items: CommunityReport[]; total: number; page: number; pageSize: number }
+export interface ReportTarget { type: 'post' | 'comment'; id: string; title: string }

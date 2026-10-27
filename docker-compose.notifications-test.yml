@@ -1,0 +1,24 @@
+# No application services, production secrets, external receivers, or persistent volumes.
+services:
+  receiver:
+    mem_limit: 128m
+    image: python:3.12-slim
+    command: python /probe/notification_receiver.py
+    volumes:
+      - ./operations/notification_receiver.py:/probe/notification_receiver.py:ro
+    ports: ["127.0.0.1::8000"]
+  alertmanager:
+    mem_limit: 256m
+    image: prom/alertmanager:v0.28.1
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/alertmanager", "--cluster.listen-address="]
+    volumes:
+      - ./operations/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./operations/alert-webhook.test.url:/etc/alertmanager/receiver.url:ro
+    depends_on: [receiver]
+  prometheus:
+    mem_limit: 512m
+    image: prom/prometheus:v3.2.1
+    volumes:
+      - ./operations/prometheus.notifications-test.yml:/etc/prometheus/prometheus.yml:ro
+      - ./operations/alerts.yml:/etc/prometheus/alerts.yml:ro
+    depends_on: [receiver, alertmanager]

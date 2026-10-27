@@ -32,6 +32,13 @@ async def platform_client(request, tmp_path, monkeypatch):
         monkeypatch.setattr(auth.settings, "AUTH_MAX_ATTEMPTS", 10)
         monkeypatch.setattr(auth.settings, "AUTH_IP_MAX_ATTEMPTS", 60)
         monkeypatch.setattr(auth.settings, "LLM_API_KEY", "")
+        monkeypatch.setattr(auth.mailer, "smtp_configured", lambda: True)
+        codes = {}
+
+        async def send_code(email, code, purpose):
+            codes[(email, purpose)] = code
+
+        monkeypatch.setattr(auth.mailer, "send_verification_code", send_code)
         app = FastAPI()
         app.add_middleware(auth.AuthCSRFMiddleware)
         app.include_router(auth.router, prefix="/api")
@@ -45,11 +52,18 @@ async def platform_client(request, tmp_path, monkeypatch):
         async with httpx.AsyncClient(
             transport=transport, base_url="http://testserver", headers={"Origin": "http://localhost:5173"}
         ) as client:
+            client.test_email_codes = codes
             yield client, sessions
 
 
 async def _register(client, username="learner"):
-    response = await client.post("/api/auth/register", json={"username": username, "password": "correct-horse-123"})
+    email = username.lower() + "@example.test"
+    sent = await client.post("/api/auth/email/code", json={"email": email, "purpose": "register"})
+    assert sent.status_code == 202, sent.text
+    response = await client.post("/api/auth/register", json={
+        "username": username, "password": "correct-horse-123", "email": email,
+        "code": client.test_email_codes[(email, "register")],
+    })
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -112,7 +126,9 @@ async def test_register_hashes_password_and_token_and_never_exposes_them(platfor
         assert login.id == auth._token_hash(token)
     me = await client.get("/api/auth/me")
     assert me.json() == user
-    duplicate = await client.post("/api/auth/register", json={"username": "LEARNER", "password": "correct-horse-123"})
+    duplicate = await client.post("/api/auth/register", json={
+        "username": "LEARNER", "password": "correct-horse-123", "email": "learner@example.test", "code": "123456",
+    })
     assert duplicate.status_code == 409
     response = await client.post("/api/auth/login", json={"username": "learner", "password": "correct-horse-123"})
     session_cookie = next(value for value in response.headers.get_list("set-cookie") if value.startswith("ra_session="))

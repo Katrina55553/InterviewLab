@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import type { FormEvent } from 'react';
-import { Link, matchPath, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Link, matchPath, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from './auth';
 import { errorMessage } from './api';
 import { Icon, Loading, Notice } from './ui';
 import type { User } from './types';
 import { RepositoryBadge } from './RepositoryBadge';
+export { AuthPage } from './AuthPage';
 
 const sidebarStorageKey = 'meeting:sidebar-collapsed';
 
@@ -18,33 +18,17 @@ const navigationGroups = [
     { to: '/resumes', label: '简历诊断', icon: 'scan', paths: ['/resumes', '/resumes/:id'] },
     { to: '/chat', label: 'JD 分析', icon: 'briefcase', paths: ['/chat', '/chat/:id'] },
     { to: '/interviews/new', label: '模拟面试', icon: 'headphones', paths: ['/interviews/:id'] },
-    { to: '/community', label: '面经社区', icon: 'chat', paths: ['/community'] },
+    { to: '/community', label: '面经社区', icon: 'chat', paths: ['/community', '/community/reports'] },
   ] },
   { label: '账户', items: [
     { to: '/settings/ai', label: 'AI 设置', icon: 'settings', paths: ['/settings/ai'] },
+    { to: '/settings/security', label: '账户安全', icon: 'settings', paths: ['/settings/security'] },
   ] },
   { label: '更多', adminOnly: true, items: [
+    { to: '/admin/community', label: '社区举报与审核', icon: 'clipboard', paths: ['/admin/community'] },
     { to: '/admin', label: '场景与智能体管理', icon: 'settings', paths: ['/admin'] },
   ] },
 ] as const;
-
-export function AuthPage() {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const { user, authenticate } = useAuth();
-  const navigate = useNavigate();
-  if (user) return <Navigate to="/" replace />;
-  const submit = async (event: FormEvent) => {
-    event.preventDefault(); setBusy(true); setError('');
-    try { await authenticate(mode, username.trim(), password); navigate('/', { replace: true }) }
-    catch (err) { setError(errorMessage(err)) }
-    finally { setBusy(false) }
-  };
-  return <div className="auth-page bg-noise"><div className="auth-story"><div className="brand"><span className="brand-icon"><Icon name="spark" /></span>知面 <small>InterviewLab</small></div><div className="auth-editorial"><span className="eyebrow">PREPARE WITH PURPOSE</span><h1>把每一次准备，<br />变成<span>更好的回答。</span></h1><p>从一份简历出发，在真实的问答里发现优势，<br />练习表达，看见每一步成长。</p><div className="auth-steps"><span>01 简历解析</span><i /><span>02 模拟面试</span><i /><span>03 复盘提升</span></div></div><p className="muted small">你的下一次面试，从这里开始。</p></div><div className="auth-form-wrap"><form className="auth-form" onSubmit={submit}><span className="eyebrow">YOUR NEXT CHAPTER</span><h2>{mode === 'login' ? '欢迎回来' : '开始你的练习'}</h2><p className="muted">{mode === 'login' ? '登录，继续积累属于你的面试经验。' : '创建账号，保存简历、对话和每一次进步。'}</p><label>用户名<input autoComplete="username" minLength={3} maxLength={64} required value={username} onChange={event => setUsername(event.target.value)} placeholder="你的用户名" /></label><label>密码<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={8} maxLength={128} required value={password} onChange={event => setPassword(event.target.value)} placeholder="至少 8 个字符" /></label>{error && <Notice>{error}</Notice>}<button className="btn primary wide" disabled={busy}>{busy ? '请稍候…' : mode === 'login' ? '登录知面' : '创建账号'}<Icon name="arrow" size={18} /></button><p className="auth-switch">{mode === 'login' ? '还没有账号？' : '已经有账号？'}<button type="button" className="text-button" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError('') }}>{mode === 'login' ? '创建一个' : '去登录'}</button></p></form></div></div>;
-}
 
 export function SessionGate() {
   const { loading, user, error, refresh } = useAuth();

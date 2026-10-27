@@ -11,6 +11,7 @@ from sqlalchemy import event, func, select
 
 from app.platform import auth, community
 from app.platform.models import CommunityComment, CommunityLike, CommunityTag
+from tests.auth_helpers import login_test_user
 from tests.platform_db import isolated_database, postgres_test_url
 
 
@@ -46,9 +47,7 @@ async def community_clients(request, tmp_path, monkeypatch):
 
 
 async def register(client, name):
-    response = await client.post("/api/auth/register", json={"username": name, "password": "community-test-pass"})
-    assert response.status_code == 201, response.text
-    return response.json()
+    return await login_test_user(client, name, "community-test-pass")
 
 
 def csrf(client):

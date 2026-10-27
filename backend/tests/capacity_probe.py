@@ -6,6 +6,7 @@ This measures the local protocol fixture, not production/provider capacity.
 import concurrent.futures
 import contextlib
 import json
+import math
 import os
 import platform
 import statistics
@@ -16,9 +17,17 @@ import uuid
 import httpx
 from fault_matrix import BASE, EVIDENCE, FAULTY, PROVIDER, checked, client, interview, output, sql, wait_for
 
+READ_SAMPLES_PER_ENDPOINT = 100
+
 
 def percentile(values, fraction):
-    return round(sorted(values)[int((len(values) - 1) * fraction)] * 1000, 2)
+    return sorted(values)[max(0, math.ceil(len(values) * fraction) - 1)] * 1000
+
+
+def require_performance_targets(evidence):
+    failed = [name for name in ("read_p95_target_met", "rejection_p95_target_met") if evidence.get(name) is not True]
+    if failed:
+        raise AssertionError("Fixture performance targets failed: " + ", ".join(failed))
 
 
 def control(**changes):
@@ -35,15 +44,19 @@ def resources():
             "queued_jobs": int(sql("SELECT count(*) FROM platform_outbox WHERE execution_status='queued'"))}
 
 
-def measure_reads(value, run, count=30):
-    samples = []
-    for index in range(count):
-        started = time.perf_counter()
-        assert value.get(f"/api/interviews/{run['id']}").status_code == 200
-        if index % 5 == 0:
-            assert value.get("/api/auth/me").status_code == 200
-        samples.append(time.perf_counter() - started)
-    return {"p50_ms": percentile(samples, .5), "p95_ms": percentile(samples, .95), "p99_ms": percentile(samples, .99)}
+def measure_reads(value, run):
+    samples = {"history": [], "auth": []}
+    paths = {"history": f"/api/interviews/{run['id']}", "auth": "/api/auth/me"}
+    for _ in range(READ_SAMPLES_PER_ENDPOINT):
+        for endpoint, path in paths.items():
+            started = time.perf_counter()
+            assert value.get(path).status_code == 200
+            samples[endpoint].append(time.perf_counter() - started)
+    summaries = {endpoint: {"p50_ms": percentile(values, .5), "p95_ms": percentile(values, .95),
+                            "p99_ms": percentile(values, .99), "samples_ms": [value * 1000 for value in values]}
+                 for endpoint, values in samples.items()}
+    # Preserve the former top-level history percentiles for existing evidence readers.
+    return {**{key: summaries["history"][key] for key in ("p50_ms", "p95_ms", "p99_ms")}, **summaries}
 
 
 def send(value, base, chat):
@@ -59,12 +72,26 @@ def send(value, base, chat):
     return {"seconds": finished - started, "finished": finished, "error": error, "completed": "event: done" in response.text}
 
 
+def finalize_evidence(evidence):
+    ratios = {endpoint: evidence["failed_provider_reads"][endpoint]["p95_ms"]
+              / evidence["baseline_reads"][endpoint]["p95_ms"] for endpoint in ("history", "auth")}
+    evidence["read_p95_ratios_under_failure"] = ratios
+    evidence["read_p95_ratio_under_failure"] = ratios["history"]
+    evidence["read_p95_target_met"] = all(ratio <= 1.2 for ratio in ratios.values())
+    evidence["rejection_p95_target_met"] = evidence["burst"]["rejection_p95_ms"] < 500
+    EVIDENCE.mkdir(parents=True, exist_ok=True)
+    (EVIDENCE / "capacity.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
+    print(json.dumps(evidence, indent=2))
+    require_performance_targets(evidence)
+
+
 def main():
     docker_cpu, docker_memory = subprocess.check_output(["docker", "info", "--format", "{{.NCPU}} {{.MemTotal}}"], text=True).split()
     evidence = {"host": platform.platform(), "provider": "isolated fixture", "shared_provider_limit": 2,
         "hardware": {"host_logical_cpus": os.cpu_count(), "machine": platform.machine(),
                      "docker_cpus": int(docker_cpu), "docker_memory_bytes": int(docker_memory)},
-        "fixture_users": 10, "fixture_interviews": 1, "read_samples_per_phase": 30}
+        "fixture_users": 10, "fixture_interviews": 1, "read_samples_per_phase": READ_SAMPLES_PER_ENDPOINT,
+        "read_samples_per_endpoint_per_phase": READ_SAMPLES_PER_ENDPOINT}
     with contextlib.ExitStack() as stack:
         # Build the control-plane client before the burst: repeatedly loading
         # the host TLS trust store can outlast the short in-flight window.
@@ -110,13 +137,8 @@ def main():
         assert timed_out["error"] == "AI_TIMEOUT" and timed_out["seconds"] <= 25
         evidence["timeout"] = {"code": timed_out["error"], "elapsed_seconds": round(timed_out["seconds"], 2)}
         control(mode="normal", delay=0)
-        evidence["read_p95_ratio_under_failure"] = round(evidence["failed_provider_reads"]["p95_ms"] / max(.01, evidence["baseline_reads"]["p95_ms"]), 3)
-        evidence["read_p95_target_met"] = evidence["read_p95_ratio_under_failure"] <= 1.2
-        evidence["rejection_p95_target_met"] = evidence["burst"]["rejection_p95_ms"] < 500
         evidence["median_attempt_ms"] = round(statistics.median(r["seconds"] for r in results) * 1000, 2)
-    EVIDENCE.mkdir(parents=True, exist_ok=True)
-    (EVIDENCE / "capacity.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
-    print(json.dumps(evidence, indent=2))
+    finalize_evidence(evidence)
 
 
 if __name__ == "__main__":

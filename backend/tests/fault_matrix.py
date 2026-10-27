@@ -67,7 +67,12 @@ def checked(response):
 @contextlib.contextmanager
 def client():
     value = httpx.Client(base_url=BASE, timeout=60, trust_env=False)
-    checked(value.post("/api/auth/register", json={"username": "fault_" + uuid.uuid4().hex[:16], "password": "test-only-password-2026"}))
+    credentials = {"username": "fault_" + uuid.uuid4().hex[:16], "password": "test-only-password-2026"}
+    subprocess.run(
+        [*COMPOSE, "exec", "-T", "backend", "python", "-m", "tests.auth_helpers"],
+        cwd=ROOT, input=json.dumps({**credentials, "fixture_model": True}), text=True, check=True, capture_output=True,
+    )
+    checked(value.post("/api/auth/login", json=credentials))
     value.headers["X-CSRF-Token"] = value.cookies["ra_csrf"]
     try:
         yield value

@@ -1,6 +1,6 @@
 # 工程化运行与故障手册
 
-本轮实现对应 [实施方案](engineering-plan.md)。业务入口仍以 [平台文档](platform.md) 为准；验收记录见 [verification.md](verification.md)。示例命令从仓库根目录执行，Python 本地命令另注明工作目录。
+本轮实现对应 [实施方案](engineering-plan.md)。业务入口仍以 [平台文档](platform.md) 为准；验收记录见 [verification.md](verification.md)，上线门禁及准备步骤见 [上线运维验收](operations-acceptance.md)。示例命令从仓库根目录执行，Python 本地命令另注明工作目录。
 
 ## 启动与迁移
 
@@ -76,39 +76,42 @@ dispatcher 短事务认领、事务外发布、条件确认。Broker 清空后�
 `metrics` 容器仅在内部9090提供 `/metrics`，Nginx 明确拒绝公开 `/metrics`。单个 exporter 从 PG 读取所有实例的调用、许可、Flight、任务和心跳，避免 prefork 计数丢失/重复；同一个数据库只抓取一次，不能对多个 exporter 副本再求和。准入、拒绝、Flight 命中、熔断事件、租约丢失和媒体背压为有限标签聚合计数，观测写入有100ms上限，失败不替换业务结果。
 
 ```bash
-docker compose --profile monitoring up -d prometheus
+# 先在私密文件中配置兼容 Alertmanager 的 webhook URL，发布目录需用绝对路径。
+export ALERT_WEBHOOK_FILE=/root/resume-agent/operations/alert-webhook.url
+docker compose --profile monitoring up -d prometheus alertmanager
 ```
 
 Prometheus 配置和告警在 `operations/`；`dashboard.json` 可导入已有 Grafana。阈值是初始值，需按实际负载调整。进程熔断观测带有效期并按 scene/state 聚合，不暴露实例或模型标签；观察不改变本进程熔断决策。任务排队和执行耗时另有直方图，旧任务没有时间数据时不补造历史耗时。
 
-`operations/alerts.test.yml` 用 promtool 验证八项告警触发、Flight 未知结果增长及健康时静默；CI 执行 `docker compose -p resumeagent-engineering-test -f docker-compose.test.yml --profile monitoring run --rm --no-deps alerts`。通知渠道和生产阈值仍需由部署环境配置。
+`operations/alerts.test.yml` 用 promtool 验证八项告警触发、Flight 未知结果增长及健康时静默；CI 执行 `docker compose -p resumeagent-engineering-test -f docker-compose.test.yml --profile monitoring run --rm --no-deps alerts`。`python scripts/check-notifications.py` 另用随机独立项目验证真实 Prometheus → Alertmanager → 本地接收器的触发与恢复送达，CI 始终保留证据；这不代表外部收件渠道已验收。配置文件与真实渠道操作见 [上线运维验收](operations-acceptance.md#本地通知链路演练)。
 
 ## 隔离验收
 
 测试栈固定项目名 `resumeagent-engineering-test`，使用 PG 临时文件系统、独立 Redis、上传卷和 localhost 测试端口。禁止把故障脚本指向业务项目；脚本不接受生产目标。协议供应商只有测试镜像引用，不是真实服务的降级实现。
 
 ```bash
+mkdir -p backend/.test-work/faults
+chmod 0777 backend/.test-work/faults  # 仅隔离测试证据目录，允许容器与宿主写入
 docker compose -p resumeagent-engineering-test -f docker-compose.test.yml up -d --build --wait
 python backend/tests/fault_matrix.py
 python backend/tests/capacity_probe.py
 python backend/tests/load_platform.py --requests 100 --concurrency 8
 ```
 
-故障实验等待明确的文件检查点后 kill，证据位于 `backend/.test-work/faults/`。容量探针记录共享在途峰值、拒绝率/延迟、正常与慢/失败/超时供应商下的事实读取、容器内存/进程和 DB 连接。性能目标逐项写为布尔结果；局部探针不代表真实供应商或生产容量。
+故障实验等待明确的文件检查点后 kill，证据位于 `backend/.test-work/faults/`。容量探针记录共享在途峰值、拒绝率/延迟、正常与慢/失败/超时供应商下的事实读取、容器内存/进程和 DB 连接。性能目标逐项写为布尔结果，未达标时保存证据并非零退出。`load_platform.py` 可设置持续时间、P95、错误率、成功吞吐门禁并输出 JSON；它仅发 HTTP GET，局部探针不代表真实供应商或生产容量。
 
-浏览器验收需测试栈显式 `TEST_DEMO_MODE=true` 重启、创建一次性管理员，然后在 `frontend` 安装 Chromium 并执行 `npm run test:e2e`、`npm run test:e2e:admin`。提供 `E2E_BASE_URL=http://127.0.0.1:18080` 和一次性管理员环境变量。CI 自动执行这些步骤，保留失败截图和脱敏证据。
+浏览器验收需测试栈显式 `TEST_DEMO_MODE=true` 重启、创建一次性管理员及两个普通测试用户，然后在 `frontend` 安装 Chromium 并执行 `npm run test:e2e`、`npm run test:e2e:admin`、`npm run test:e2e:chat`。提供 `E2E_BASE_URL=http://127.0.0.1:18080`、`E2E_ADMIN_USERNAME/PASSWORD`、`E2E_USERNAME/PASSWORD` 和 `E2E_CHAT_USERNAME/PASSWORD`。普通测试用户由 `tests.auth_helpers.provision_user` 在隔离数据库中准备，脚本通过正常登录获取会话；测试栈不连接 QQ SMTP。邮箱注册及找回由独立认证测试验证，使用邮件传输替身。CI 自动执行这些步骤，保留失败截图和脱敏证据。
 
 ## 备份、发布和回退
 
-CI 使用提交 SHA 构建镜像，完整测试通过后保存同一镜像与校验和；部署 workflow 只下载对应成功运行的制品。`deploy-release.sh` 校验制品、检查已有生产配置、停止应用写入、备份 PG、增量迁移并等待 Web/Worker/dispatcher/inspector 健康，最后验证三个队列的持久任务。失败返回非零并保留组件日志。单机维护窗口包含备份与迁移时间，发布期间有停机。
+CI 使用提交 SHA 构建镜像，完整测试通过后保存同一镜像及所有发布文件的校验和；部署 workflow 只下载对应成功运行的制品。`deploy-release.sh` 校验制品、检查已有生产配置、停止全部应用写入（含 celery-beat），在数据库就绪后备份 PG、uploads 与对应私有配置，再增量迁移并等待组件健康，最后验证三个队列的持久任务。发布与回退使用同一把主机锁；失败返回非零并提示私下检查服务日志。单机维护窗口包含备份与迁移时间，发布期间有停机。
 
-Linux 备份示例：
+备份目录权限700、文件默认600，包含数据库、逐表行数/迁移版本、结构摘要、上传文件摘要、原始 `backend/.env` 和校验清单；不上传 Git 或 CI，失败时保留 `.incomplete`。离机加密备份与保留策略仍需部署环境配置。使用新建隔离容器演练恢复：
 
 ```bash
-docker compose exec -T postgres pg_dump -U postgres -Fc resume_agent > backup.dump
-# 在隔离数据库验证恢复后，再制定生产切换窗口。
-docker compose exec -T postgres createdb -U postgres resume_agent_restore
-docker compose exec -T postgres pg_restore -U postgres -d resume_agent_restore < backup.dump
+bash releases/<sha>/scripts/restore-drill.sh \
+  /root/resume-agent/backups/<backup-directory> \
+  resume-agent-backend:<sha>
 ```
 
 应用回退使用上一份已测试制品：
@@ -117,7 +120,9 @@ docker compose exec -T postgres pg_restore -U postgres -d resume_agent_restore <
 bash releases/<previous-sha>/scripts/rollback-release.sh <previous-sha> /root/resume-agent
 ```
 
-脚本先用旧镜像对当前 DB 执行实际迁移兼容检查，通过后才替换应用；不运行 downgrade，不删除新表。数据库 head 不被旧镜像接受时直接失败，需要先提供兼容镜像，不能靠删除迁移版本行绕过。首次工程化升级之前的硬编码 head 镜像不视为已验证的回退目标。预生产上一镜像回退、生产备份恢复和真实供应商联调仍需在对应环境演练。
+恢复演练使用随机新容器和卷、`--network none`、无主机端口，校验结构、迁移 head、逐表行数、文件摘要与私有配置，并用备份密钥验证现存及冻结凭据可解密后清理，不输出明文或调用 AI。它不切换业务数据；RPO/RTO和业务抽检须在目标环境记录。
+
+回退脚本先检查配置，再用旧镜像对当前 DB 执行实际迁移兼容检查，通过后才停止并替换应用（含 celery-beat）；不运行 downgrade，不删除新表。数据库 head 不被旧镜像接受时直接失败，需要先提供兼容镜像，不能靠删除迁移版本行绕过。首次工程化升级之前的硬编码 head 镜像不视为已验证的回退目标。预生产上一镜像回退、生产备份恢复和真实供应商联调仍需在对应环境演练。
 
 ## 更换 SECRET_KEY
 

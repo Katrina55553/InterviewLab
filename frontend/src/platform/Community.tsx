@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
-import type { FormEvent, ReactNode } from 'react';
+import { useRef, useState } from 'react';
+import type { FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, errorMessage, requestId } from './api';
 import { useAuth } from './auth';
 import { directions, outcomes } from './community-data';
 import type { CommunityPost, CommunityDraft, CommunityFeed, CommunityMeta, CommentPage, DraftResult, CommunityComment, Direction, Outcome } from './community-data';
 import { useCommunityResource } from './community-api';
+import { CommunityModal as Modal } from './CommunityModal';
+import { ReportDialog } from './CommunityReports';
+import type { ReportTarget } from './community-data';
 import { Icon, Loading, Notice, RichText } from './ui';
 import { Select } from './Select';
 import './community.css';
@@ -17,32 +20,17 @@ function dateLabel(value: string) {
   return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', timeZone: 'Asia/Shanghai' }).format(new Date(value));
 }
 
-function Modal({ title, className = '', busy = false, onClose, children }: { title: string; className?: string; busy?: boolean; onClose: () => void; children: ReactNode }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const dialog = ref.current!;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    dialog.showModal();
-    dialog.querySelector<HTMLElement>('[data-community-focus]')?.focus();
-    return () => { dialog.close(); document.body.style.overflow = previousOverflow };
-  }, []);
-  return <dialog ref={ref} className={`community-dialog ${className}`} aria-label={title} onCancel={event => { event.preventDefault(); if (!busy) onClose() }} onClick={event => { if (!busy && event.target === event.currentTarget) onClose() }}>
-    <div className="community-dialog-inner"><header className="community-dialog-header"><span><Icon name="book" size={18} />{title}</span><button type="button" className="community-icon-button" aria-label="关闭弹窗" disabled={busy} onClick={onClose}><Icon name="close" /></button></header>{children}</div>
-  </dialog>;
-}
-
 function PostManagement({ post, busy, onEdit, onDelete }: { post: CommunityPost; busy: boolean; onEdit: () => void; onDelete: () => void }) {
   return <div className="community-post-management"><button type="button" disabled={busy} aria-label={`编辑面经：${post.title}`} onClick={onEdit}><Icon name="pencil" size={14} />编辑</button><button type="button" className="community-delete" disabled={busy} aria-label={`删除面经：${post.title}`} onClick={onDelete}><Icon name="trash" size={14} />删除</button></div>;
 }
 
-function PostCard({ post, busy, owned, onOpen, onLike, onEdit, onDelete }: { post: CommunityPost; busy: boolean; owned: boolean; onOpen: () => void; onLike: () => void; onEdit: () => void; onDelete: () => void }) {
+function PostCard({ post, busy, owned, onOpen, onLike, onEdit, onDelete, onReport }: { post: CommunityPost; busy: boolean; owned: boolean; onOpen: () => void; onLike: () => void; onEdit: () => void; onDelete: () => void; onReport: () => void }) {
   return <article className={`community-post${post.featured ? ' community-post-featured' : ''}`}>
     <div className="community-post-meta"><span className={`community-company company-${post.direction === '前端开发' ? 'mint' : post.direction === '后端开发' ? 'blue' : 'peach'}`} aria-hidden="true">{post.company.slice(0, 1)}</span><span>{post.company}<span className="community-meta-divider">/</span>{post.role}</span><span className="community-post-stage">{post.stage}</span><span className={`community-outcome${post.outcome === '已拿 Offer' ? ' offer' : ''}`}>{post.outcome === '已拿 Offer' && <Icon name="check" size={12} />}{post.outcome}</span></div>
     <h2><button type="button" onClick={onOpen}>{post.featured && <span className="community-featured-label">精选</span>}{post.title}</button></h2>
     <p className="community-post-summary">{post.summary}</p><div className="community-post-tags">{post.tags.map(tag => <span key={tag}>{tag}</span>)}</div>
     <footer className="community-post-footer"><span className="community-author"><span className={`community-avatar avatar-${post.direction === '后端开发' ? 'sand' : 'sage'}`}>{post.author.slice(0, 1)}</span><span>{post.author}</span><span className="community-post-date">{dateLabel(post.createdAt)}</span></span>
-      <div className="community-post-actions"><button type="button" disabled={busy} className={post.liked ? 'is-active' : ''} aria-label={`${post.liked ? '取消点赞' : '点赞'}：${post.title}`} aria-pressed={post.liked} onClick={onLike}><Icon name="like" size={15} /><span>{post.likes}</span><span>{post.liked ? '已点赞' : '点赞'}</span></button><button type="button" aria-label={`查看评论：${post.title}`} onClick={onOpen}><Icon name="chat" size={15} /><span>{post.commentCount}</span></button></div>
+      <div className="community-post-actions">{!owned && <button type="button" disabled={busy} aria-label={`举报面经：${post.title}`} onClick={onReport}>举报</button>}<button type="button" disabled={busy} className={post.liked ? 'is-active' : ''} aria-label={`${post.liked ? '取消点赞' : '点赞'}：${post.title}`} aria-pressed={post.liked} onClick={onLike}><Icon name="like" size={15} /><span>{post.likes}</span><span>{post.liked ? '已点赞' : '点赞'}</span></button><button type="button" aria-label={`查看评论：${post.title}`} onClick={onOpen}><Icon name="chat" size={15} /><span>{post.commentCount}</span></button></div>
     </footer>
     {owned && <PostManagement post={post} busy={busy} onEdit={onEdit} onDelete={onDelete} />}
   </article>;
@@ -69,6 +57,7 @@ function CommunityWorkspace({ userId, username }: { userId: string; username: st
   const [commentPage, setCommentPage] = useState(1);
   const [error, setError] = useState('');
   const [feedback, setFeedback] = useState('');
+  const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [pendingLikes, setPendingLikes] = useState<string[]>([]);
   const commentRequest = useRef<{ id: string; postId: string; content: string } | null>(null);
@@ -187,7 +176,7 @@ function CommunityWorkspace({ userId, username }: { userId: string; username: st
   };
 
   return <div className="community-page">
-    <div className="community-page-heading"><div><span className="community-eyebrow"><span />GROW TOGETHER</span><h1>面经社区<span>每一份经历，都有值得分享的价值。</span></h1></div><button type="button" className="btn primary community-publish" disabled={busy} onClick={() => void openEditor()}><Icon name="pencil" size={17} />发布面经</button></div>
+    <div className="community-page-heading"><div><span className="community-eyebrow"><span />GROW TOGETHER</span><h1>面经社区<span>每一份经历，都有值得分享的价值。</span></h1></div><div className="community-heading-actions"><Link className="btn" to="/community/reports">我的举报</Link><button type="button" className="btn primary community-publish" disabled={busy} onClick={() => void openEditor()}><Icon name="pencil" size={17} />发布面经</button></div></div>
 
     <section className="community-hero" aria-labelledby="community-hero-title">
       <div className="community-hero-copy"><span className="community-hero-kicker"><Icon name="chat" size={15} />一份面经，多一份底气</span><h2 id="community-hero-title">让经历成为经验，<br />让下一次面试<span>更从容。</span></h2><p>读一读他人的面试故事，也记录自己的成长。<br className="community-desktop-break" />从真实的问题出发，找到适合你的准备方向。</p><button type="button" className="community-hero-link" onClick={() => { searchRef.current?.focus(); listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}>发现值得读的面经<Icon name="arrow" size={16} /></button></div>
@@ -201,7 +190,7 @@ function CommunityWorkspace({ userId, username }: { userId: string; username: st
       {(hasFilters) && <div className="community-filter-summary"><span>正在查看{direction === '全部' ? '' : `「${direction}」`}{company === '全部公司' ? '' : `「${company}」`}{topic && `「话题：${topic}」`}{query && `包含「${query}」的`}面经</span><button type="button" onClick={resetFilters}>清除筛选<Icon name="close" size={12} /></button></div>}
       <div className="community-feedback" role="status">{feedback}</div>
       {displayError && !editorOpen && !postId && <Notice>{displayError}<button type="button" className="text-button" onClick={() => { setError(''); refresh() }}>重新加载</button></Notice>}
-      <div className="community-feed">{feed.loading && !feed.data && <Loading text="正在加载面经…" />}{(feed.data?.items ?? []).map(post => <PostCard key={post.id} post={post} busy={busy || pendingLikes.includes(post.id)} owned={post.authorId === userId} onOpen={() => openPost(post.id)} onLike={() => void toggleLiked(post)} onEdit={() => void editPost(post)} onDelete={() => void deletePost(post)} />)}
+      <div className="community-feed">{feed.loading && !feed.data && <Loading text="正在加载面经…" />}{(feed.data?.items ?? []).map(post => <PostCard key={post.id} post={post} busy={busy || pendingLikes.includes(post.id)} owned={post.authorId === userId} onOpen={() => openPost(post.id)} onLike={() => void toggleLiked(post)} onEdit={() => void editPost(post)} onDelete={() => void deletePost(post)} onReport={() => setReportTarget({ type: 'post', id: post.id, title: post.title })} />)}
         {!feed.loading && !feed.error && !total && <div className="community-empty"><span><Icon name={tab === 'liked' ? 'like' : tab === 'mine' ? 'pencil' : 'search'} size={27} /></span><h2>{hasFilters ? '暂时没有找到相关面经' : tab === 'liked' ? '还没有点赞的面经' : '你的经历，也能成为别人的参考'}</h2><p>{hasFilters ? '试试其他关键词，或放宽一下筛选条件。' : tab === 'liked' ? '给有帮助的面经点个赞，就能在这里找到。' : '记录面试问题、准备方法和一点点新的收获。'}</p>{hasFilters ? <button type="button" className="btn" onClick={resetFilters}>清除筛选</button> : tab === 'liked' ? <button type="button" className="btn" onClick={() => selectTab('recommended')}>去发现面经<Icon name="arrow" size={15} /></button> : <button type="button" className="btn primary" disabled={busy} onClick={() => void openEditor()}><Icon name="plus" size={16} />写下第一篇面经</button>}</div>}
       </div>
       {total > 0 && <div className="community-pagination"><span>共 {total} 篇，当前第 {currentPage} / {pages} 页</span><nav aria-label="面经分页"><button type="button" aria-label="上一页" disabled={currentPage === 1} onClick={() => { setPage(currentPage - 1); listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}><Icon name="chevron" size={15} /></button>{pageNumbers.map(item => <button type="button" aria-label={`第 ${item} 页`} aria-current={item === currentPage ? 'page' : undefined} key={item} onClick={() => { setPage(item); listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}>{item}</button>)}<button type="button" aria-label="下一页" disabled={currentPage === pages} onClick={() => { setPage(currentPage + 1); listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}><Icon name="chevron" size={15} /></button></nav></div>}
@@ -224,15 +213,16 @@ function CommunityWorkspace({ userId, username }: { userId: string; username: st
         <div className="community-reader-kicker"><span>{activePost.company} / {activePost.role}</span><span className="community-outcome">{activePost.stage}</span></div>
         <h1>{activePost.title}</h1><div className="community-reader-author"><span className="community-avatar avatar-sage">{activePost.author.slice(0, 1)}</span><strong>{activePost.author}</strong><time dateTime={activePost.createdAt}>{new Date(activePost.createdAt).toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' })}</time></div>
         <div className="community-post-tags">{activePost.tags.map(tag => <span key={tag}>{tag}</span>)}</div><RichText text={activePost.content ?? ''} />
-        <div className="community-reader-actions"><button type="button" disabled={busy || pendingLikes.includes(activePost.id)} className={`btn${activePost.liked ? ' community-action-selected' : ''}`} aria-pressed={activePost.liked} onClick={() => void toggleLiked(activePost)}><Icon name="like" size={16} />{activePost.liked ? '已点赞' : '点赞'} · {activePost.likes}</button>{activePost.authorId === userId && <PostManagement post={activePost} busy={busy} onEdit={() => void editPost(activePost)} onDelete={() => void deletePost(activePost)} />}</div>{feedback && <div className="community-feedback" role="status">{feedback}</div>}
+        <div className="community-reader-actions">{activePost.authorId !== userId && <button type="button" className="btn" disabled={busy} onClick={() => setReportTarget({ type: 'post', id: activePost.id, title: activePost.title })}>举报面经</button>}<button type="button" disabled={busy || pendingLikes.includes(activePost.id)} className={`btn${activePost.liked ? ' community-action-selected' : ''}`} aria-pressed={activePost.liked} onClick={() => void toggleLiked(activePost)}><Icon name="like" size={16} />{activePost.liked ? '已点赞' : '点赞'} · {activePost.likes}</button>{activePost.authorId === userId && <PostManagement post={activePost} busy={busy} onEdit={() => void editPost(activePost)} onDelete={() => void deletePost(activePost)} />}</div>{feedback && <div className="community-feedback" role="status">{feedback}</div>}
         <section className="community-comments"><h2>交流与补充<span>{activePost.commentCount}</span></h2><p>交流准备思路，也欢迎补充你的面试经验。</p>
           {comments.loading && !comments.data && <Loading text="正在加载评论…" />}
           {comments.error && <Notice>{comments.error}<button type="button" className="text-button" onClick={comments.refresh}>重试</button></Notice>}
-          {(comments.data?.items ?? []).map(item => <article key={item.id}><span className="community-avatar avatar-sage">{item.author.slice(0, 1)}</span><div><strong>{item.author}<time dateTime={item.createdAt}>{dateLabel(item.createdAt)}</time></strong><p>{item.content}</p></div></article>)}
+          {(comments.data?.items ?? []).map(item => <article key={item.id}><span className="community-avatar avatar-sage">{item.author.slice(0, 1)}</span><div><strong>{item.author}<time dateTime={item.createdAt}>{dateLabel(item.createdAt)}</time></strong><p>{item.content}</p>{item.authorId !== userId && <button type="button" className="text-button community-comment-report" disabled={busy} aria-label={`举报评论：${item.author}`} onClick={() => setReportTarget({ type: 'comment', id: item.id, title: item.content })}>举报</button>}</div></article>)}
           {comments.data && (commentPage > 1 || comments.data.hasMore) && <nav className="community-comment-pagination" aria-label="评论分页"><button type="button" className="text-button" disabled={commentPage === 1} onClick={() => setCommentPage(value => value - 1)}>上一页评论</button><span>第 {commentPage} 页</span><button type="button" className="text-button" disabled={!comments.data.hasMore} onClick={() => setCommentPage(value => value + 1)}>下一页评论</button></nav>}
           <form onSubmit={event => void addComment(event)}><label htmlFor="community-comment" className="sr-only">评论内容</label><textarea id="community-comment" maxLength={2000} rows={3} required disabled={busy} value={comment} onChange={event => setComment(event.target.value)} placeholder="有哪些值得补充的面试经验？" /><div><span>{comment.length} / 2,000</span><button type="submit" className="btn primary" disabled={busy || !comment.trim()}>{busy ? '正在发布…' : '发布评论'}<Icon name="arrow" size={14} /></button></div></form>
         </section>{error && <Notice>{error}</Notice>}
       </div>}
     </Modal>}
+    {reportTarget && <ReportDialog key={`${reportTarget.type}:${reportTarget.id}`} target={reportTarget} onClose={() => setReportTarget(null)} onSubmitted={report => { setReportTarget(null); setFeedback(report.status === 'pending' ? '举报已提交，可在「我的举报」中查看处理进度。' : '该内容已举报，可在「我的举报」中查看处理结果。') }} />}
   </div>;
 }

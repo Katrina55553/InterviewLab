@@ -65,11 +65,12 @@ beforeEach(() => {
       const page = Math.min(Number(url.searchParams.get('page') ?? 1), Math.max(1, Math.ceil(filtered.length / 5)));
       return json({ items: filtered.slice((page - 1) * 5, page * 5).map(view), total: filtered.length, page, pageSize: 5 });
     }
+    if (url.pathname === '/api/community/reports') return json({ ...body, status: 'pending' }, 201);
     const id = url.pathname.split('/')[4]; const post = posts.find(item => item.id === id);
     if (!post) return json({ detail: '面经不存在' }, 404);
     if (url.pathname.endsWith('/like')) { liked = method === 'PUT'; return json({ liked, likes: Number(liked) }) }
     if (url.pathname.endsWith('/comments')) {
-      if (method === 'POST') { const item = { ...body, author: user.username, createdAt: '2026-10-24T08:00:00Z' }; comments.push(item); return json(item, 201) }
+      if (method === 'POST') { const item = { ...body, authorId: user.id, author: user.username, createdAt: '2026-10-24T08:00:00Z' }; comments.push(item); return json(item, 201) }
       return json({ items: comments, total: comments.length, page: 1, hasMore: false });
     }
     if (method === 'PUT' || method === 'DELETE') {
@@ -89,6 +90,31 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals() });
 
 describe('server-backed community', () => {
+  it('reports a post with a stable request id after failure and links to account history', async () => {
+    await mount(); await click('举报面经：后端面试复盘 0');
+    await selectOption('举报原因', '泄露个人隐私');
+    await input('#community-report-details', '正文包含电话号码，请核实。');
+    failWrite = true; await submit('.community-report-form');
+    expect(container.querySelector('.community-report-dialog [role="alert"]')!.textContent).toContain('服务暂时不可用');
+    expect(container.querySelector<HTMLTextAreaElement>('#community-report-details')!.value).toBe('正文包含电话号码，请核实。');
+    failWrite = false; await submit('.community-report-form');
+    const requests = calls.filter(call => call.method === 'POST' && call.path === '/api/community/reports');
+    expect(requests).toHaveLength(2); expect(requests[1].body).toEqual(requests[0].body);
+    expect(requests[1].body).toMatchObject({ targetType: 'post', targetId: firstId, reason: 'privacy', details: '正文包含电话号码，请核实。' });
+    expect(container.querySelector('.community-report-dialog')).toBeNull();
+    expect(container.textContent).toContain('举报已提交');
+    expect(container.querySelector('a[href="/community/reports"]')!.textContent).toBe('我的举报');
+  });
+  it('reports comments from the reader and closes only the report dialog when cancelled', async () => {
+    comments = [{ id: 'comment-1', authorId: 'reader', author: '读者', content: '需要核实的评论', createdAt: '2026-10-24T08:00:00Z' }];
+    await mount(`/community?post=${firstId}`); await click('举报评论：读者');
+    expect(container.querySelectorAll('dialog[open]')).toHaveLength(2);
+    await click('取消'); expect(container.querySelector('.community-reader[open]')).not.toBeNull();
+    await click('举报评论：读者'); await selectOption('举报原因', '人身攻击或骚扰'); await submit('.community-report-form');
+    expect(calls.find(call => call.path === '/api/community/reports')?.body).toMatchObject({ targetType: 'comment', targetId: 'comment-1', reason: 'abuse', details: '' });
+    expect(container.querySelector('.community-reader[open]')).not.toBeNull();
+    expect(container.querySelector('.community-reader [role="status"]')!.textContent).toContain('举报已提交');
+  });
   it('requests server pagination, search and exact topic filters', async () => {
     await mount(); expect(cards()).toHaveLength(5);
     await click('下一页'); expect(cards()).toHaveLength(2);
@@ -190,7 +216,7 @@ describe('server-backed community', () => {
   it('cancels editing from the reader without saving and shows updated details after a successful edit', async () => {
     posts[0].authorId = 'user-a'; liked = true;
     posts[0].tags = ['算法 / AI', '系统 设计'];
-    comments = [{ id: 'comment', author: '读者', content: '保留的评论', createdAt: '2026-10-24T08:00:00Z' }];
+    comments = [{ id: 'comment', authorId: 'reader', author: '读者', content: '保留的评论', createdAt: '2026-10-24T08:00:00Z' }];
     await mount(`/community?post=${firstId}`);
     await act(async () => container.querySelector<HTMLButtonElement>('.community-reader [aria-label^="编辑面经："]')!.click());
     await input('.community-editor input', '放弃的修改'); await click('取消编辑');

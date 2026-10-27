@@ -17,6 +17,7 @@ from app.platform.ai import guard
 from app.platform.contracts import PlatformError
 from app.platform.model_transport import PublicModelTransport, public_address, validate_personal_url
 from app.platform.models import AiCall, ChatMessage, UserModelCredential
+from tests.auth_helpers import login_test_user
 from tests.platform_db import isolated_database, postgres_test_url
 
 SELECTION = {"connectionType": "builtin", "authMethod": "api-key", "providerId": "deepseek", "modelId": "deepseek-chat"}
@@ -41,10 +42,9 @@ async def personal_client(request, tmp_path, monkeypatch):
 
 
 async def register(client, username="model_owner"):
-    response = await client.post("/api/auth/register", json={"username": username, "password": "test-password-123"})
-    assert response.status_code == 201, response.text
+    user = await login_test_user(client, username, "test-password-123")
     client.headers["X-CSRF-Token"] = client.cookies[auth.CSRF_COOKIE]
-    return response.json()["id"]
+    return user["id"]
 
 
 async def connect(client, key="personal-key"):

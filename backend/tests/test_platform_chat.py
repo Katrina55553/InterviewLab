@@ -22,6 +22,7 @@ from app.core.database import Base
 from app.platform import auth, chat
 from app.platform.models import Agent, Chat, ChatMessage, Provider, Resume, ResumeDiagnosis, User, new_id, utcnow
 from app.platform.runtime import AIError
+from tests.auth_helpers import login_test_user
 
 
 @pytest_asyncio.fixture
@@ -52,9 +53,7 @@ async def chat_client(tmp_path, monkeypatch):
 
 
 async def register(client, name="chat_owner"):
-    response = await client.post("/api/auth/register", json={"username": name, "password": "correct-horse-123"})
-    assert response.status_code == 201, response.text
-    return response.json()
+    return await login_test_user(client, name, "correct-horse-123")
 
 
 def csrf(client):

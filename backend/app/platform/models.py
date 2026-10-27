@@ -35,10 +35,15 @@ json_type = JSON().with_variant(JSONB(), "postgresql")
 
 class User(Base):
     __tablename__ = "platform_users"
-    __table_args__ = (CheckConstraint("role IN ('user', 'admin')", name="platform_user_role"),)
+    __table_args__ = (
+        CheckConstraint("role IN ('user', 'admin')", name="platform_user_role"),
+        Index("uq_platform_users_email", "email", unique=True),
+    )
 
     id = Column(String(36), primary_key=True, default=new_id)
     username = Column(String(64), unique=True, nullable=False)
+    # Nullable for existing accounts; populated only after proving mailbox ownership.
+    email = Column(String(254), nullable=True)
     password_hash = Column(Text, nullable=False)
     role = Column(String(16), nullable=False, default="user")
     created_at = Column(DateTime, nullable=False, default=utcnow)
@@ -126,6 +131,27 @@ class AuthThrottle(Base):
     id = Column(String(128), primary_key=True)
     attempts = Column(Integer, nullable=False, default=0)
     expires_at = Column(DateTime, nullable=False, index=True)
+
+
+class EmailChallenge(Base):
+    """One durable, replaceable challenge per mailbox, purpose and binding account."""
+
+    __tablename__ = "platform_email_challenges"
+    __table_args__ = (
+        CheckConstraint("purpose IN ('register', 'reset', 'bind')", name="platform_email_challenge_purpose"),
+        CheckConstraint("status IN ('pending', 'sent', 'consumed')", name="platform_email_challenge_status"),
+    )
+
+    id = Column(String(64), primary_key=True)
+    email = Column(String(254), nullable=False)
+    purpose = Column(String(16), nullable=False)
+    user_id = Column(String(36), ForeignKey("platform_users.id", ondelete="CASCADE"), nullable=True)
+    generation = Column(String(36), nullable=False)
+    code_hash = Column(String(64), nullable=False)
+    status = Column(String(16), nullable=False, default="pending")
+    attempts = Column(Integer, nullable=False, default=0)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    resend_at = Column(DateTime, nullable=False)
 
 
 class Resume(Base):
@@ -426,6 +452,7 @@ class CommunityPost(Base):
     outcome = Column(String(24), nullable=False)
     content = Column(Text, nullable=False)
     featured = Column(Boolean, nullable=False, default=False)
+    is_hidden = Column(Boolean, nullable=False, default=False, server_default=false())
     created_at = Column(DateTime, nullable=False, default=utcnow)
 
 
@@ -452,7 +479,41 @@ class CommunityComment(Base):
     post_id = Column(String(36), ForeignKey("platform_community_posts.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(String(36), ForeignKey("platform_users.id", ondelete="CASCADE"), nullable=False, index=True)
     content = Column(String(2000), nullable=False)
+    is_hidden = Column(Boolean, nullable=False, default=False, server_default=false())
     created_at = Column(DateTime, nullable=False, default=utcnow)
+
+
+class CommunityReport(Base):
+    """Immutable reported content and review facts survive target deletion."""
+
+    __tablename__ = "platform_community_reports"
+    __table_args__ = (
+        UniqueConstraint("reporter_id", "target_type", "target_id", name="uq_platform_community_report_target"),
+        CheckConstraint("target_type IN ('post', 'comment')", name="platform_community_report_target_type"),
+        CheckConstraint("reason IN ('spam', 'abuse', 'privacy', 'illegal', 'other')", name="platform_community_report_reason"),
+        CheckConstraint("status IN ('pending', 'resolved', 'dismissed')", name="platform_community_report_status"),
+        Index("ix_platform_community_report_status_created", "status", "created_at", "id"),
+        Index("ix_platform_community_report_reporter_created", "reporter_id", "created_at", "id"),
+        Index("ix_platform_community_report_post", "post_id"),
+        Index("ix_platform_community_report_target", "target_type", "target_id"),
+    )
+
+    id = Column(String(36), primary_key=True, default=new_id)
+    reporter_id = Column(String(36), ForeignKey("platform_users.id", ondelete="SET NULL"))
+    reporter_name = Column(String(64), nullable=False)
+    target_type = Column(String(16), nullable=False)
+    target_id = Column(String(36), nullable=False)
+    post_id = Column(String(36), nullable=False)
+    target_title = Column(String(100), nullable=False)
+    target_content = Column(Text, nullable=False)
+    reason = Column(String(16), nullable=False)
+    details = Column(String(1000), nullable=False, default="")
+    status = Column(String(16), nullable=False, default="pending")
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+    reviewer_id = Column(String(36), ForeignKey("platform_users.id", ondelete="SET NULL"))
+    reviewer_name = Column(String(64))
+    reviewed_at = Column(DateTime)
+    review_note = Column(String(1000), nullable=False, default="")
 
 
 class CommunityDraft(Base):
